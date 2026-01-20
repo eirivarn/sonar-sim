@@ -17,7 +17,7 @@ from src.sim.sonar import Sonar
 from src.sim.fish_cage import NetCage, FishSchool
 from src.sim.primitives import Plane, Sphere
 from src.sim.fish_farm_world import build_fish_farm_world, get_default_sonar_config
-from src.sim.visualization import draw_cage_wireframe, draw_plane, draw_sonar_position
+from src.sim.visualization import draw_cage_wireframe, draw_plane, draw_sonar_position, draw_sonar_fov
 from src.sim.math3d import rpy_to_R
 from src.sim.config import SonarConfig, VisualizationConfig, SimulationConfig
 
@@ -173,6 +173,11 @@ class FishFarmViewer:
         
         # Clear and redraw 3D view
         self.ax3d.clear()
+        
+        # Draw sonar FOV cone
+        draw_sonar_fov(self.ax3d, self.sonar.pos, self.sonar.rpy, 
+                      self.sonar.hfov_deg, self.sonar.range_m, 
+                      alpha=0.15, color='cyan')
         
         # Draw cage wireframe
         draw_cage_wireframe(self.ax3d, self.net_cage.center, 

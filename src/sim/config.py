@@ -72,6 +72,10 @@ class FishConfig:
     NUM_FISH = 1000             # Total number of fish in simulation
                                 # More = denser schools but slower simulation
     
+    # Movement
+    ENABLE_FISH_MOVEMENT = False # Toggle fish swimming on/off
+                                # False = static fish positions (for testing)
+    
     # Distribution (percentages should sum to ~1.0)
     PERIMETER_CLUSTER_RATIO = 0.75  # Fraction clustered near perimeter (0-1)
                                      # Higher = more fish at cage walls
@@ -89,10 +93,10 @@ class FishConfig:
                                 # Smaller = fish closer to same radius
     
     # Perimeter positioning
-    PERIMETER_RADIUS_MEAN = 0.95    # Mean radius for perimeter fish (0-1)
+    PERIMETER_RADIUS_MEAN = 0.98    # Mean radius for perimeter fish (0-1)
                                      # Higher = closer to cage wall
     
-    PERIMETER_RADIUS_MIN = 0.7     # Minimum radius for perimeter fish (0-1)
+    PERIMETER_RADIUS_MIN = 0.85     # Minimum radius for perimeter fish (0-1) - increased so fish reach the net
     PERIMETER_RADIUS_MAX = 1.0     # Maximum radius for perimeter fish (0-1)
     
     # Scattered fish (non-clustered)
@@ -129,7 +133,7 @@ class FishConfig:
     DEPTH_PREFERENCE_STRENGTH = 0.3     # Force to maintain preferred depth
                                          # Higher = less vertical wandering
     
-    WALL_AVOIDANCE_THRESHOLD = 0.3      # Distance from wall to start avoiding (m)
+    WALL_AVOIDANCE_THRESHOLD = 0.15      # Distance from wall to start avoiding (m) - reduced so fish get closer
     WALL_AVOIDANCE_STRENGTH = 3.0       # Force pushing away from walls
     
     BURST_PROBABILITY = 0.002   # Per-frame probability of burst swimming (0-1)
@@ -182,6 +186,14 @@ class SonarConfig:
     H_BEAMS = 181               # Number of horizontal beams (angular samples)
                                 # More = better angular resolution, slower
     
+    # Beam cone spreading (multibeam sonar characteristic)
+    BEAMWIDTH_DEG = 1.5         # Beam cone half-angle (degrees)
+                                # At range R, beam footprint diameter = 2 * R * tan(beamwidth)
+                                # Larger = more spreading, lower resolution at far ranges
+    
+    RAYS_PER_BEAM = 5           # Number of rays to cast per beam for cone sampling
+                                # More = better cone coverage, slower (1 = pencil beam)
+    
     # Range settings
     RANGE_M = 35.0              # Maximum range (meters)
                                 # Limited by physics: absorption, spreading loss
@@ -216,20 +228,20 @@ class SignalProcessingConfig:
     """Realistic sonar effects and signal processing parameters."""
     
     # Speckle noise (coherent interference)
-    SPECKLE_LOOKS = 2.0         # Number of looks for speckle averaging (1-8)
+    SPECKLE_LOOKS = 1.5         # Number of looks for speckle averaging (1-8)
                                 # 1.0 = very grainy/scattery (raw sonar)
                                 # 2-3 = moderate texture
                                 # 4-8 = smooth (multi-looked)
     
     # Noise floor
-    NOISE_FLOOR = 1e-6          # Receiver noise level (linear scale)
+    NOISE_FLOOR = 3e-5          # Receiver noise level (linear scale)
                                 # Higher = more background noise
     
     # Shadowing (acoustic occlusion behind strong targets)
     SHADOW_THRESHOLD_PERCENTILE = 0.995  # Percentile for shadow threshold
                                           # Only strongest returns cast shadows
     
-    SHADOW_STRENGTH = 0.85      # Shadow attenuation factor (0-1)
+    SHADOW_STRENGTH = 0.50      # Shadow attenuation factor (0-1)
                                 # Higher = darker shadows behind objects
     
     SHADOW_RECOVERY_RATE = 0.01 # Rate of shadow recovery along beam
@@ -246,10 +258,10 @@ class SignalProcessingConfig:
                                 # Lower = brighter midtones, higher = more contrast
     
     # Beam and range point spread functions (PSF)
-    BEAM_PSF_SIGMA = 0.8        # Beam blurring (angular resolution limit)
+    BEAM_PSF_SIGMA = 1.2        # Beam blurring (angular resolution limit)
                                 # Higher = more angular blur
     
-    RANGE_PSF_SIGMA = 0.5       # Range blurring (range resolution limit)
+    RANGE_PSF_SIGMA = 0.8       # Range blurring (range resolution limit)
                                 # Higher = more range blur
 
 

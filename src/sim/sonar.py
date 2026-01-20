@@ -13,6 +13,8 @@ class Sonar:
     range_m: float = SonarConfig.RANGE_M
     hfov_deg: float = SonarConfig.HFOV_DEG
     h_beams: int = SonarConfig.H_BEAMS
+    beamwidth_deg: float = SonarConfig.BEAMWIDTH_DEG  # Cone half-angle
+    rays_per_beam: int = SonarConfig.RAYS_PER_BEAM    # Rays in cone
     attenuation: float = SonarConfig.ATTENUATION
     noise_std: float = SonarConfig.NOISE_STD
     enable_multipath: bool = SonarConfig.ENABLE_MULTIPATH
@@ -28,6 +30,7 @@ class Sonar:
         """Returns dict with distances and intensities with realistic artifacts."""
         R = rpy_to_R(float(self.rpy[0]), float(self.rpy[1]), float(self.rpy[2]))
         hfov = np.deg2rad(self.hfov_deg)
+        beamwidth_rad = np.deg2rad(self.beamwidth_deg)
 
         distances = np.full(self.h_beams, self.range_m, dtype=np.float32)
         intensities = np.zeros(self.h_beams, dtype=np.float32)
@@ -35,54 +38,84 @@ class Sonar:
 
         for i in range(self.h_beams):
             t = 0.5 if self.h_beams == 1 else i / (self.h_beams - 1)
-            yaw = (-hfov * 0.5) + t * hfov
+            yaw_center = (-hfov * 0.5) + t * hfov
 
-            # yaw around local +Z (up), so the scan is in XY plane
-            cy, sy = np.cos(yaw), np.sin(yaw)
-            dir_local = np.array([cy, sy, 0.0], dtype=float)
-
-            rd = unit(R @ dir_local)
-            
-            # Primary return with multipath
-            incident_strength = 1.0
+            # Cast multiple rays in a cone for this beam
             beam_returns = []
             
-            if self.enable_multipath:
-                # Cast multiple times for multipath
-                current_pos = self.pos.copy()
-                for bounce in range(3):  # Up to 3 bounces
-                    hit = world.raycast(current_pos, rd, self.range_m)
-                    if hit is None:
-                        break
-                    
-                    # Apply water attenuation
-                    total_dist = np.linalg.norm(hit.point - self.pos)
-                    attenuated_strength = incident_strength * np.exp(-self.attenuation * total_dist) * 0.8
-                    
-                    # Material reflection/transmission
-                    reflected = attenuated_strength * hit.reflectivity
-                    transmitted = attenuated_strength * (1 - hit.reflectivity)
-                    
-                    if reflected > 0.05:  # Only record if strong enough
-                        beam_returns.append((total_dist, reflected))
-                    
-                    # Continue with transmitted ray
-                    incident_strength = transmitted
-                    if incident_strength < 0.1:
-                        break
-                    
-                    # Continue from hit point (slight offset to avoid self-intersection)
-                    current_pos = hit.point + rd * 0.01
-            else:
-                # Simple single return
-                hit = world.raycast(self.pos, rd, self.range_m)
-                if hit is not None:
-                    dist = float(hit.t)
-                    attenuated = np.exp(-self.attenuation * dist) * 0.8
-                    reflected = attenuated * hit.reflectivity
-                    beam_returns.append((dist, reflected))
+            for ray_idx in range(self.rays_per_beam):
+                # Sample cone pattern: center ray + pattern around it
+                if self.rays_per_beam == 1:
+                    # Single pencil beam (backward compatible)
+                    yaw_offset = 0.0
+                    pitch_offset = 0.0
+                else:
+                    # Distribute rays in cone using circular pattern
+                    # First ray is center, others distributed around
+                    if ray_idx == 0:
+                        yaw_offset = 0.0
+                        pitch_offset = 0.0
+                    else:
+                        # Arrange remaining rays in circular pattern
+                        angle = 2.0 * np.pi * (ray_idx - 1) / max(1, self.rays_per_beam - 1)
+                        # Random radius within cone (weighted toward edge for better coverage)
+                        r = beamwidth_rad * np.sqrt(np.random.uniform(0.3, 1.0))
+                        yaw_offset = r * np.cos(angle)
+                        pitch_offset = r * np.sin(angle)
+                
+                # Compute ray direction with cone offset
+                yaw_total = yaw_center + yaw_offset
+                pitch_total = pitch_offset
+                
+                cy, sy = np.cos(yaw_total), np.sin(yaw_total)
+                cp, sp = np.cos(pitch_total), np.sin(pitch_total)
+                
+                # Direction in local frame (accounting for pitch and yaw)
+                dir_local = np.array([cy * cp, sy * cp, sp], dtype=float)
+                dir_local = dir_local / np.linalg.norm(dir_local)  # Normalize
+
+                rd = R @ dir_local
             
-            # Take strongest return as primary
+                # Primary return with multipath for this ray in the cone
+                incident_strength = 1.0
+                
+                if self.enable_multipath:
+                    # Cast multiple times for multipath
+                    current_pos = self.pos.copy()
+                    for bounce in range(3):  # Up to 3 bounces
+                        hit = world.raycast(current_pos, rd, self.range_m)
+                        if hit is None:
+                            break
+                        
+                        # Apply water attenuation
+                        total_dist = np.linalg.norm(hit.point - self.pos)
+                        attenuated_strength = incident_strength * np.exp(-self.attenuation * total_dist) * 0.8
+                        
+                        # Material reflection/transmission
+                        reflected = attenuated_strength * hit.reflectivity
+                        transmitted = attenuated_strength * (1 - hit.reflectivity)
+                        
+                        if reflected > 0.05:  # Only record if strong enough
+                            beam_returns.append((total_dist, reflected))
+                        
+                        # Continue with transmitted ray
+                        incident_strength = transmitted
+                        if incident_strength < 0.1:
+                            break
+                        
+                        # Continue from hit point (slight offset to avoid self-intersection)
+                        current_pos = hit.point + rd * 0.01
+                else:
+                    # Simple single return
+                    hit = world.raycast(self.pos, rd, self.range_m)
+                    if hit is not None:
+                        dist = float(hit.t)
+                        attenuated = np.exp(-self.attenuation * dist) * 0.8
+                        reflected = attenuated * hit.reflectivity
+                        beam_returns.append((dist, reflected))
+            
+            # Average returns from all rays in the cone (simulate beam integration)
+            # Take strongest return as primary, but blend with others for realistic spreading effect
             if beam_returns:
                 beam_returns.sort(key=lambda x: x[1], reverse=True)  # Sort by intensity
                 primary_dist, primary_intensity = beam_returns[0]

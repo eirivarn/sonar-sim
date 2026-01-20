@@ -505,6 +505,10 @@ class FishSchool(Primitive):
     
     def update(self, dt: float):
         """Update fish positions with schooling behavior."""
+        # Check if fish movement is enabled
+        if not FishConfig.ENABLE_FISH_MOVEMENT:
+            return  # Skip updates if movement disabled
+        
         # Update spatial grid for neighbor queries
         if self.use_spatial_grid:
             self._rebuild_spatial_grid()

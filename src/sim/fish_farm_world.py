@@ -51,9 +51,9 @@ def build_fish_farm_world() -> tuple[World, NetCage, FishSchool]:
         obj_id="water_clutter",
         bmin=np.array([-30.0, -40.0, -40.0]),  # Larger volume for bigger cage
         bmax=np.array([80.0, 40.0, 0.0]),      # Up to surface
-        base_prob=0.12,  # 12% base chance of hit per ray
-        reflectivity_min=0.02,  # Very weak scatterers
-        reflectivity_max=0.12,
+        base_prob=0.20,  # 20% base chance of hit per ray - increased for more debris
+        reflectivity_min=0.03,  # Weak scatterers with some reflection
+        reflectivity_max=0.18,  # Higher reflectivity for visible debris
         depth_influence=0.3,  # More clutter near surface
         surface_depth=0.0,
         feeding_mode=False  # Can be toggled for high-clutter events
