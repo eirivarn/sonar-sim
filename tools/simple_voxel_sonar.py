@@ -280,10 +280,21 @@ class VoxelSonar:
                 
                 return_energy = scatter * spreading_loss * water_absorption
                 
-                # Deposit into range bin
+                # SPATIAL JITTER: Echo position uncertainty for freckled appearance
+                # Real sonar has range uncertainty - echoes can appear in neighboring bins
+                # This creates realistic "freckled" appearance on static objects like nets
                 bin_idx = int((distance / self.range_m) * (len(output_bins) - 1))
-                if 0 <= bin_idx < len(output_bins):
-                    output_bins[bin_idx] += return_energy
+                
+                jitter_prob = 0.3  # 30% chance of spatial jitter
+                if np.random.rand() < jitter_prob:
+                    # Randomly shift to neighboring range bin
+                    bin_jitter = bin_idx + np.random.choice([-1, 0, 1])
+                    bin_jitter = np.clip(bin_jitter, 0, len(output_bins) - 1)
+                else:
+                    bin_jitter = bin_idx
+                
+                if 0 <= bin_jitter < len(output_bins):
+                    output_bins[bin_jitter] += return_energy
             
             # ABSORPTION: Reduce forward energy (creates shadows)
             if density > 0.01:
@@ -392,7 +403,7 @@ def create_demo_scene() -> VoxelGrid:
         })
     
     # Add floating debris - different sizes and materials
-    num_debris = 100  # Increased from 50
+    num_debris = 0  
     debris_data = []
     debris_materials = [DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY]
     
