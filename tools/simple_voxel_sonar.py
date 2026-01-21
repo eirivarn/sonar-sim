@@ -27,6 +27,7 @@ NET = Material("net", 0.3, 0.2, 0.5)  # Increased absorption for shadow
 ROPE = Material("rope", 0.8, 0.4, 0.8)  # Strong absorption
 FISH = Material("fish", 0.7, 0.5, 0.6)  # Fish cast shadows
 WALL = Material("wall", 1.0, 0.5, 1.0)
+BIOMASS = Material("biomass", 0.9, 0.7, 0.4)  # Algae/fouling - very bright, moderate shadow
 DEBRIS_LIGHT = Material("debris_light", 0.8, 0.6, 0.3)  # Light debris - bright
 DEBRIS_MEDIUM = Material("debris_medium", 0.9, 0.7, 0.7)  # Medium debris - brighter
 DEBRIS_HEAVY = Material("debris_heavy", 1.0, 0.8, 1.2)  # Heavy debris - very bright
@@ -212,13 +213,17 @@ class VoxelSonar:
             t = beam_idx / (self.num_beams - 1) if self.num_beams > 1 else 0.5
             angle = (-fov_rad / 2) + t * fov_rad
             
+            # BEAM PATTERN: Gaussian falloff toward edges
+            # Center beams are strongest, edge beams are weaker
+            beam_pattern = np.exp(-((angle / (fov_rad/2))**2) * 1.5)  # Gaussian, 1.5 controls width
+            
             # Rotate direction by angle
             dir_angle = np.arctan2(self.direction[1], self.direction[0])
             beam_angle = dir_angle + angle
             beam_dir = np.array([np.cos(beam_angle), np.sin(beam_angle)])
             
             # Ray march through volume
-            self._march_ray(grid, self.position, beam_dir, image[:, beam_idx])
+            self._march_ray(grid, self.position, beam_dir, image[:, beam_idx], beam_pattern)
         
         # TEMPORAL DECORRELATION: Additional frame-to-frame variability on objects only
         # Small random fluctuations representing net sway, water movement, etc.
@@ -230,10 +235,11 @@ class VoxelSonar:
         return image
     
     def _march_ray(self, grid: VoxelGrid, origin: np.ndarray, direction: np.ndarray,
-                   output_bins: np.ndarray):
+                   output_bins: np.ndarray, beam_strength: float = 1.0):
         """March ray through voxel grid, accumulating returns.
         
-        This is the core volumetric integration - no surface hits!
+        Args:
+            beam_strength: Beam pattern multiplier (1.0 at center, lower at edges)
         """
         # DDA-style voxel traversal
         step_size = grid.voxel_size * 0.5  # Sub-voxel steps for smooth integration
@@ -285,16 +291,22 @@ class VoxelSonar:
                 # This creates realistic "freckled" appearance on static objects like nets
                 bin_idx = int((distance / self.range_m) * (len(output_bins) - 1))
                 
-                jitter_prob = 0.3  # 30% chance of spatial jitter
+                jitter_prob = 0.5  # 50% chance of spatial jitter
                 if np.random.rand() < jitter_prob:
-                    # Randomly shift to neighboring range bin
-                    bin_jitter = bin_idx + np.random.choice([-1, 0, 1])
+                    # Random Gaussian jitter - most small, occasionally large (±3 range)
+                    # RANGE-DEPENDENT: jitter increases with distance (resolution degradation)
+                    range_factor = 1.0 + (distance / self.range_m) * 2.0  # 1x at 0m, 3x at max range
+                    jitter_offset = int(np.round(np.random.randn() * 1.2 * range_factor))
+                    jitter_offset = np.clip(jitter_offset, -5, 5)  # Allow larger jitter at range
+                    bin_jitter = bin_idx + jitter_offset
                     bin_jitter = np.clip(bin_jitter, 0, len(output_bins) - 1)
                 else:
                     bin_jitter = bin_idx
                 
                 if 0 <= bin_jitter < len(output_bins):
-                    output_bins[bin_jitter] += return_energy
+                    # Apply beam strength (weaker at edges) and range-dependent quality loss
+                    range_quality = 1.0 / (1.0 + (distance / self.range_m) * 0.5)  # Gradual quality loss
+                    output_bins[bin_jitter] += return_energy * beam_strength * range_quality
             
             # ABSORPTION: Reduce forward energy (creates shadows)
             if density > 0.01:
@@ -363,6 +375,30 @@ def create_demo_scene() -> VoxelGrid:
                     np.array([x + 0.12, y + 0.12]),
                     ROPE
                 )
+    
+    # Add random biomass patches (algae/fouling) to net
+    # Simulate realistic net fouling in random locations
+    np.random.seed(123)  # Different seed for biomass placement
+    num_biomass_patches = 40  # Number of fouling patches
+    
+    for _ in range(num_biomass_patches):
+        # Random position on cage perimeter
+        angle = np.random.rand() * 2 * np.pi
+        r = cage_radius + np.random.randn() * 0.5  # Slight radius variation
+        
+        x = cage_center[0] + r * np.cos(angle)
+        y = cage_center[1] + r * np.sin(angle)
+        
+        # Biomass patch size: 20-60cm clusters
+        patch_size = 0.2 + np.random.rand() * 0.4
+        
+        grid.set_circle(
+            np.array([x, y]),
+            patch_size,
+            BIOMASS
+        )
+    
+    np.random.seed(42)  # Reset seed for fish
     
     # Add fish scattered throughout cage - store as dynamic objects
     np.random.seed(42)  # Reproducible fish positions

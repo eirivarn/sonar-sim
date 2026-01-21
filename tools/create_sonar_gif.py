@@ -148,8 +148,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Create sonar scanning animation GIF')
     parser.add_argument('--output', '-o', default='sonar_scan.gif', 
                        help='Output GIF filename (default: sonar_scan.gif)')
-    parser.add_argument('--duration', '-d', type=float, default=10.0,
-                       help='Animation duration in seconds (default: 10)')
+    parser.add_argument('--duration', '-d', type=float, default=5.0,
+                       help='Animation duration in seconds (default: 5)')
     parser.add_argument('--fps', '-f', type=int, default=40,
                        help='Frames per second (default: 40)')
     
