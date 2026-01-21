@@ -184,11 +184,11 @@ class SonarConfig:
     SONAR_ORIENTATION = np.array([0.0, 0.0, 90.0])  # Roll, pitch, yaw (degrees)
     
     # Field of view
-    HFOV_DEG = 90.0             # Horizontal field of view (degrees)
+    HFOV_DEG = 60.0             # Horizontal field of view (degrees)
                                 # Wider = see more area, but lower angular resolution
     
-    H_BEAMS = 181               # Number of horizontal beams (angular samples)
-                                # More = better angular resolution, slower
+    H_BEAMS = 1000               # Number of horizontal beams (angular samples)
+                                 # More = better angular resolution, slower
     
     # Beam cone spreading (multibeam sonar characteristic)
     BEAMWIDTH_DEG = 10          # Beam cone half-angle (degrees)
@@ -199,7 +199,7 @@ class SonarConfig:
                                 # More = better cone coverage, slower (1 = pencil beam)
     
     # Multi-hit tracing (for returns behind porous objects like nets)
-    MAX_HITS_PER_RAY = 3        # Maximum hits to trace along each ray (2-3 recommended)
+    MAX_HITS_PER_RAY = 4        # Maximum hits to trace along each ray (2-3 recommended)
                                 # Higher = see fish behind nets, slower
     
     MIN_HIT_STRENGTH = 0.025     # Minimum signal strength to continue tracing
@@ -211,7 +211,7 @@ class SonarConfig:
                                 # <1.0 = more signal loss, objects more opaque
     
     # Beam pattern weighting
-    BEAM_PATTERN_SIGMA_DEG = 0.8  # Gaussian sigma for beam pattern weighting (degrees)
+    BEAM_PATTERN_SIGMA_DEG = 0.5  # Gaussian sigma for beam pattern weighting (degrees)
                                   # Controls how rays in cone are weighted by angle
     
     USE_DETERMINISTIC_CONE = True  # Use precomputed cone pattern (vs random per frame)
@@ -230,7 +230,24 @@ class SonarConfig:
                                 # Higher = faster signal decay with distance
                                 # 0.05 typical for ~700 kHz in seawater
     
-    EDGE_STRENGTH_DB = 6.0      # Edge rolloff for beam pattern (dB)
+    PULSE_LENGTH_BINS = 15     # Pulse length in range bins for deposition spread
+                                # Simulates finite pulse duration + surface scattering
+                                # 1-2 bins = realistic spread (±1-2 bins from hit center)
+                                # 0 = delta function (unrealistically sharp)
+    
+    RANGE_TAIL_BINS = 15       # Exponential tail extending in range after hit
+                                # Simulates receiver integration time and reverberation
+                                # Creates continuous signal instead of discrete hits
+                                # 5-10 bins = realistic continuous appearance
+                                # 0 = sharp cutoff (binary appearance)
+    
+    ANGULAR_SPREAD_BEAMS = 2.0  # Angular spread in beams for acoustic deposition
+                                # Simulates beam width and target extent
+                                # Returns spread across neighboring beams
+                                # 2-3 beams = realistic spread
+                                # 0 = single beam (unrealistically sharp)
+    
+    EDGE_STRENGTH_DB = 10.0     # Edge rolloff for beam pattern (dB)
                                 # Higher = sharper beam edges, more sidelobe
     
     # Feature flags
@@ -250,7 +267,7 @@ class SignalProcessingConfig:
     """Realistic sonar effects and signal processing parameters."""
     
     # Speckle noise (coherent interference)
-    SPECKLE_LOOKS = 1.5         # Number of looks for speckle averaging (1-8)
+    SPECKLE_LOOKS = 5         # Number of looks for speckle averaging (1-8)
                                 # 1.0 = very grainy/scattery (raw sonar)
                                 # 2-3 = moderate texture
                                 # 4-8 = smooth (multi-looked)
@@ -274,17 +291,17 @@ class SignalProcessingConfig:
                                 # Compensates for r^-2 spreading loss
     
     # Enhancement parameters
-    PERCENTILE_LOW = 0.01       # Lower percentile for contrast stretching
-    PERCENTILE_HIGH = 0.995     # Upper percentile for contrast stretching
-    GAMMA_CORRECTION = 0.75     # Gamma for final display enhancement
+    PERCENTILE_LOW = 0.05       # Lower percentile for contrast stretching
+    PERCENTILE_HIGH = 0.8     # Upper percentile for contrast stretching
+    GAMMA_CORRECTION = 0.7     # Gamma for final display enhancement
                                 # Lower = brighter midtones, higher = more contrast
     
     # Water column clutter (injected directly into mu)
-    CLUTTER_DENSITY = 0.0008    # Probability of clutter per range-beam cell
+    CLUTTER_DENSITY = 0.0005    # Probability of clutter per range-beam cell
                                 # Higher = more sparse returns in water column
     
     CLUTTER_INTENSITY_MIN = 0.02  # Minimum clutter reflectivity
-    CLUTTER_INTENSITY_MAX = 0.08  # Maximum clutter reflectivity
+    CLUTTER_INTENSITY_MAX = 0.06  # Maximum clutter reflectivity
     
     CLUTTER_RANGE_DECAY = 0.02  # Clutter density decay with range (1/m)
                                 # Higher = less clutter at far range

@@ -2,7 +2,7 @@
 import numpy as np
 
 from .world import World
-from .primitives import Plane, Sphere, ClutterVolume
+from .primitives import Plane, Sphere
 from .fish_cage import NetCage, FishSchool
 from .config import WorldConfig, CageConfig, FishConfig
 
@@ -47,21 +47,6 @@ def build_fish_farm_world() -> tuple[World, NetCage, FishSchool]:
     # Add fish to world only if enabled in config
     if FishConfig.ENABLE_FISH_IN_WORLD:
         w.objects.append(fish_school)
-    
-    # WATER COLUMN CLUTTER - simulates plankton, particles, suspended matter
-    # Covers the entire operational area with probabilistic scatterers
-    clutter_volume = ClutterVolume(
-        obj_id="water_clutter",
-        bmin=np.array([-30.0, -40.0, -40.0]),  # Larger volume for bigger cage
-        bmax=np.array([80.0, 40.0, 0.0]),      # Up to surface
-        base_prob=0.20,  # 20% base chance of hit per ray - increased for more debris
-        reflectivity_min=0.03,  # Weak scatterers with some reflection
-        reflectivity_max=0.18,  # Higher reflectivity for visible debris
-        depth_influence=0.3,  # More clutter near surface
-        surface_depth=0.0,
-        feeding_mode=False  # Can be toggled for high-clutter events
-    )
-    w.objects.append(clutter_volume)
     
     return w, net_cage, fish_school
 

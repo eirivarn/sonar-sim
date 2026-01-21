@@ -10,6 +10,7 @@ This module implements the high-realism sonar measurement model:
 from __future__ import annotations
 from dataclasses import dataclass, field
 import numpy as np
+from scipy.ndimage import convolve1d
 from .math3d import rpy_to_R
 from .world import World
 from .sonar_effects import render_realistic_sonar
@@ -174,10 +175,9 @@ class Sonar:
                         # Weighted energy deposition
                         energy = hit_intensity * weight
                         
-                        # Find range bin
+                        # Find range bin and deposit directly
                         r_idx = int(hit_dist / dr)
                         if 0 <= r_idx < self.range_bins:
-                            # Deposit directly (no PSF blur)
                             mu[r_idx, beam_idx] += energy
                 
                 # Structured multipath (surface/seafloor mirrors)
@@ -192,6 +192,27 @@ class Sonar:
         
         # Inject water column clutter
         self._inject_clutter(mu, r_bins)
+        
+        # Apply 2D spreading to create continuous surfaces
+        # This handles both angular (beam width) and range (pulse length) spreading
+        
+        # 1. Range spreading - creates continuous lines in range direction
+        range_spread_sigma = SonarConfig.PULSE_LENGTH_BINS
+        if range_spread_sigma > 0:
+            kernel_width = int(np.ceil(range_spread_sigma * 3))
+            kernel = np.exp(-0.5 * (np.arange(-kernel_width, kernel_width + 1) / range_spread_sigma)**2)
+            kernel = kernel / kernel.sum()
+            # Apply along range axis (axis=0)
+            mu = convolve1d(mu, kernel, axis=0, mode='nearest')
+        
+        # 2. Angular spreading - creates continuous lines in beam direction
+        beam_spread_sigma = SonarConfig.ANGULAR_SPREAD_BEAMS
+        if beam_spread_sigma > 0:
+            kernel_width = int(np.ceil(beam_spread_sigma * 3))
+            kernel = np.exp(-0.5 * (np.arange(-kernel_width, kernel_width + 1) / beam_spread_sigma)**2)
+            kernel = kernel / kernel.sum()
+            # Apply along beam axis (axis=1)
+            mu = convolve1d(mu, kernel, axis=1, mode='wrap')
         
         # Apply realistic sonar effects
         if self.enable_realistic_effects:
