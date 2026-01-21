@@ -452,7 +452,7 @@ def create_demo_scene() -> VoxelGrid:
     return grid, fish_data, debris_data
 
 
-def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_radius: float):
+def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_radius: float, sonar_pos: np.ndarray):
     """Update fish positions and redraw them in the grid."""
     # Clear existing fish
     grid.clear_fish()
@@ -462,9 +462,9 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
     # B: Solitary (avoid all fish)
     # C: Mixed (moderate attraction to all)
     behavior = {
-        'A': {'same_attract': 2.0, 'other_attract': 0.1, 'avoid': 0.8},
-        'B': {'same_attract': 0.0, 'other_attract': 0.0, 'avoid': 2.0},
-        'C': {'same_attract': 0.8, 'other_attract': 0.6, 'avoid': 1.0}
+        'A': {'same_attract': 2.0, 'other_attract': 0.1, 'avoid': 0.8, 'sonar_avoid': 1.0},
+        'B': {'same_attract': 0.0, 'other_attract': 0.0, 'avoid': 2.0, 'sonar_avoid': 2.5},
+        'C': {'same_attract': 0.8, 'other_attract': 0.6, 'avoid': 1.0, 'sonar_avoid': 1.8}
     }
     
     # Update each fish
@@ -511,6 +511,15 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
         if other_count > 0:
             steer += params['other_attract'] * other_attract_vec / other_count
         steer += params['avoid'] * avoid_vec
+        
+        # SONAR AVOIDANCE: Fish flee from the robot/sonar
+        diff_from_sonar = fish['pos'] - sonar_pos
+        dist_from_sonar = np.linalg.norm(diff_from_sonar)
+        
+        if dist_from_sonar < 5.0 and dist_from_sonar > 0.01:  # Within 5m detection range
+            # Flee away from sonar with inverse square law
+            flee_strength = params['sonar_avoid'] / (dist_from_sonar**2 + 0.5)
+            steer += flee_strength * diff_from_sonar / dist_from_sonar
         
         # Add small random component
         steer += (np.random.rand(2) - 0.5) * 0.3
@@ -629,7 +638,7 @@ def main():
     def update_display():
         """Update sonar and map displays."""
         # Update fish positions
-        update_fish(grid, fish_data, cage_center, cage_radius)
+        update_fish(grid, fish_data, cage_center, cage_radius, sonar.position)
         
         # Update debris positions
         update_debris(grid, debris_data, cage_center, cage_radius)
