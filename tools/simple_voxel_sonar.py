@@ -23,7 +23,7 @@ class Material:
 
 # Material library
 EMPTY = Material("empty", 0.0, 0.0, 0.0)
-NET = Material("net", 0.3, 0.2, 0.5)  # Increased absorption for shadow
+NET = Material("net", 0.3, 0.2, 0.15)  # Light absorption - nets are thin and sparse
 ROPE = Material("rope", 0.8, 0.4, 0.8)  # Strong absorption
 FISH = Material("fish", 0.7, 0.5, 0.6)  # Fish cast shadows
 WALL = Material("wall", 1.0, 0.5, 1.0)
@@ -215,7 +215,7 @@ class VoxelSonar:
             
             # BEAM PATTERN: Gaussian falloff toward edges
             # Center beams are strongest, edge beams are weaker
-            beam_pattern = np.exp(-((angle / (fov_rad/2))**2) * 1.5)  # Gaussian, 1.5 controls width
+            beam_pattern = np.exp(-((angle / (fov_rad/2))**2) * 2.5)  # Increased from 1.5 to 2.5 for stronger falloff
             
             # Rotate direction by angle
             dir_angle = np.arctan2(self.direction[1], self.direction[0])
@@ -293,25 +293,41 @@ class VoxelSonar:
                 
                 jitter_prob = 0.5  # 50% chance of spatial jitter
                 if np.random.rand() < jitter_prob:
-                    # Random Gaussian jitter - most small, occasionally large (±3 range)
+                    # Random Gaussian jitter - most small, occasionally large
                     # RANGE-DEPENDENT: jitter increases with distance (resolution degradation)
-                    range_factor = 1.0 + (distance / self.range_m) * 2.0  # 1x at 0m, 3x at max range
-                    jitter_offset = int(np.round(np.random.randn() * 1.2 * range_factor))
-                    jitter_offset = np.clip(jitter_offset, -5, 5)  # Allow larger jitter at range
+                    range_factor = 1.0 + (distance / self.range_m) * 3.0  # Increased from 2.0 to 3.0 - stronger degradation
+                    jitter_offset = int(np.round(np.random.randn() * 1.5 * range_factor))  # Increased from 1.2 to 1.5
+                    jitter_offset = np.clip(jitter_offset, -8, 8)  # Expanded from ±5 to ±8
                     bin_jitter = bin_idx + jitter_offset
                     bin_jitter = np.clip(bin_jitter, 0, len(output_bins) - 1)
                 else:
                     bin_jitter = bin_idx
                 
-                if 0 <= bin_jitter < len(output_bins):
-                    # Apply beam strength (weaker at edges) and range-dependent quality loss
-                    range_quality = 1.0 / (1.0 + (distance / self.range_m) * 0.5)  # Gradual quality loss
-                    output_bins[bin_jitter] += return_energy * beam_strength * range_quality
+                # MULTI-BIN SPREADING: Sometimes deposit return across multiple adjacent bins
+                # Simulates target extent, multipath, and processing artifacts
+                spread_prob = 0.3  # 30% chance of multi-bin spreading
+                if np.random.rand() < spread_prob:
+                    # Spread across 2-4 adjacent bins
+                    num_spread_bins = np.random.choice([2, 3, 4], p=[0.5, 0.35, 0.15])
+                    spread_center = bin_jitter
+                    
+                    for offset in range(-(num_spread_bins//2), (num_spread_bins//2) + 1):
+                        spread_bin = spread_center + offset
+                        if 0 <= spread_bin < len(output_bins):
+                            # Energy falls off from center of spread (Gaussian-ish)
+                            spread_weight = np.exp(-0.5 * (offset / (num_spread_bins/3))**2)
+                            range_quality = 1.0 / (1.0 + (distance / self.range_m) * 0.8)
+                            output_bins[spread_bin] += return_energy * beam_strength * range_quality * spread_weight / num_spread_bins
+                else:
+                    # Single bin deposit
+                    if 0 <= bin_jitter < len(output_bins):
+                        range_quality = 1.0 / (1.0 + (distance / self.range_m) * 0.8)
+                        output_bins[bin_jitter] += return_energy * beam_strength * range_quality
             
             # ABSORPTION: Reduce forward energy (creates shadows)
             if density > 0.01:
                 # Both absorption and scattering reduce forward energy
-                energy *= np.exp(-absorption * step_size * 5.0)  # Stronger absorption
+                energy *= np.exp(-absorption * step_size * 2.0)  # Moderate absorption
                 energy *= (1.0 - density * reflectivity * step_size * 3.0)  # Scattering loss
                 energy = max(0.0, energy)
             
@@ -343,33 +359,90 @@ def create_demo_scene() -> VoxelGrid:
     # Net cage parameters (centered at 25, 25)
     cage_center = np.array([25.0, 25.0])
     cage_radius = 20.0  # 20m radius
-    num_sides = 12      # Dodecagon cage
+    num_sides = 24      # More sides for finer linear sections
     
-    # Create circular net panels
+    # Current effect: simulate southward current pulling on net
+    # Current strength and direction
+    current_direction = np.array([0.0, 1.0])  # Southward (positive Y)
+    current_strength = 6.5  # Maximum displacement in meters (increased for more dramatic bending)
+    
+    # Create circular net panels with current deflection
     for i in range(num_sides):
         angle1 = (i / num_sides) * 2 * np.pi
         angle2 = ((i + 1) / num_sides) * 2 * np.pi
         
-        # Panel corners
-        x1 = cage_center[0] + cage_radius * np.cos(angle1)
-        y1 = cage_center[1] + cage_radius * np.sin(angle1)
-        x2 = cage_center[0] + cage_radius * np.cos(angle2)
-        y2 = cage_center[1] + cage_radius * np.sin(angle2)
+        # Panel corners (base positions)
+        x1_base = cage_center[0] + cage_radius * np.cos(angle1)
+        y1_base = cage_center[1] + cage_radius * np.sin(angle1)
+        x2_base = cage_center[0] + cage_radius * np.cos(angle2)
+        y2_base = cage_center[1] + cage_radius * np.sin(angle2)
         
-        # Create net line for this panel
-        for t in np.linspace(0, 1, 80):
-            x = x1 + t * (x2 - x1)
-            y = y1 + t * (y2 - y1)
+        # Apply current deflection based on position
+        # Panels on the south side are pushed more by current
+        # Use a cosine-based deflection: maximum at south, zero at north
+        deflection1 = current_strength * max(0, (y1_base - cage_center[1]) / cage_radius) * current_direction
+        deflection2 = current_strength * max(0, (y2_base - cage_center[1]) / cage_radius) * current_direction
+        
+        # Add some lateral spreading based on angle from current direction
+        lateral_factor1 = np.sin(angle1) * 0.4  # ±40% lateral deflection
+        lateral_factor2 = np.sin(angle2) * 0.4
+        deflection1 += np.array([lateral_factor1 * current_strength * 0.3, 0])
+        deflection2 += np.array([lateral_factor2 * current_strength * 0.3, 0])
+        
+        # Final panel corners with deflection
+        x1 = x1_base + deflection1[0]
+        y1 = y1_base + deflection1[1]
+        x2 = x2_base + deflection2[0]
+        y2 = y2_base + deflection2[1]
+        
+        # Create net line for this panel - ensure we sample ALL segments
+        # Use 100 samples instead of 80 to ensure no gaps
+        for t in np.linspace(0, 1, 100):
+            # Linear interpolation
+            x_linear = x1 + t * (x2 - x1)
+            y_linear = y1 + t * (y2 - y1)
             
-            # Net mesh
+            # Add catenary-like sag to each panel segment
+            # Maximum sag at midpoint (t=0.5)
+            sag = 0.8 * (1 - (2*t - 1)**2)  # Parabolic curve, max 0.8m at center
+            
+            # Direction perpendicular to panel (inward toward cage center)
+            panel_dx = x2 - x1
+            panel_dy = y2 - y1
+            panel_length = np.sqrt(panel_dx**2 + panel_dy**2)
+            if panel_length > 0:
+                # Perpendicular vector pointing inward
+                perp_x = -panel_dy / panel_length
+                perp_y = panel_dx / panel_length
+                # Determine if perpendicular points inward or outward
+                mid_x = (x1 + x2) / 2
+                mid_y = (y1 + y2) / 2
+                to_center_x = cage_center[0] - mid_x
+                to_center_y = cage_center[1] - mid_y
+                # If perpendicular is opposite to center direction, flip it
+                if perp_x * to_center_x + perp_y * to_center_y < 0:
+                    perp_x = -perp_x
+                    perp_y = -perp_y
+                
+                x = x_linear + sag * perp_x
+                y = y_linear + sag * perp_y
+            else:
+                x = x_linear
+                y = y_linear
+            
+            # Ensure coordinates are within grid bounds (with margin for box size)
+            x = np.clip(x, 0.2, 49.8)
+            y = np.clip(y, 0.2, 49.8)
+            
+            # Net mesh - always created
             grid.set_box(
                 np.array([x - 0.08, y - 0.08]),
                 np.array([x + 0.08, y + 0.08]),
                 NET
             )
             
-            # Add occasional rope structure
-            if t % (1.0 / 7) < 0.02:
+            # Add occasional rope structure - ensure this is also created
+            if t % (1.0 / 7) < 0.025:  # Slightly increased threshold to ensure rope coverage
                 grid.set_box(
                     np.array([x - 0.12, y - 0.12]),
                     np.array([x + 0.12, y + 0.12]),
@@ -402,7 +475,7 @@ def create_demo_scene() -> VoxelGrid:
     
     # Add fish scattered throughout cage - store as dynamic objects
     np.random.seed(42)  # Reproducible fish positions
-    num_fish = 400
+    num_fish = 500
     
     # Store fish data for animation
     fish_data = []
@@ -422,9 +495,9 @@ def create_demo_scene() -> VoxelGrid:
         vx = swim_speed * np.cos(swim_angle)
         vy = swim_speed * np.sin(swim_angle)
         
-        # Fish size
-        fish_length = 0.3 + np.random.rand() * 0.1  # 30-40cm long
-        fish_width = fish_length * 0.25  # Width is 25% of length
+        # Fish size: longer and slimmer
+        fish_length = 0.4 + np.random.rand() * 0.1  # 40-60cm long
+        fish_width = fish_length * 0.20  # Width is 20% of length (slimmer)
         
         # Assign species (A, B, C) evenly
         species = ['A', 'B', 'C'][_ % 3]
@@ -720,14 +793,74 @@ def main():
         # Update map display
         ax_map.clear()
         
-        # Draw cage outline (polygon)
+        # Draw bent cage outline with current deflection
         cage_x = []
         cage_y = []
-        for i in range(num_sides + 1):
-            angle = (i / num_sides) * 2 * np.pi
-            cage_x.append(cage_center[0] + cage_radius * np.cos(angle))
-            cage_y.append(cage_center[1] + cage_radius * np.sin(angle))
-        ax_map.plot(cage_x, cage_y, 'b-', linewidth=2, label='Cage')
+        
+        # Current parameters (must match create_demo_scene)
+        current_strength = 6.5
+        current_direction = np.array([0.0, 1.0])
+        
+        # Draw each panel segment with curvature
+        for i in range(num_sides):
+            # Get corner points
+            angle1 = (i / num_sides) * 2 * np.pi
+            angle2 = ((i + 1) / num_sides) * 2 * np.pi
+            
+            x1_base = cage_center[0] + cage_radius * np.cos(angle1)
+            y1_base = cage_center[1] + cage_radius * np.sin(angle1)
+            x2_base = cage_center[0] + cage_radius * np.cos(angle2)
+            y2_base = cage_center[1] + cage_radius * np.sin(angle2)
+            
+            # Apply current deflection to corners
+            deflection1 = current_strength * max(0, (y1_base - cage_center[1]) / cage_radius) * current_direction
+            lateral_factor1 = np.sin(angle1) * 0.4
+            deflection1 += np.array([lateral_factor1 * current_strength * 0.3, 0])
+            
+            deflection2 = current_strength * max(0, (y2_base - cage_center[1]) / cage_radius) * current_direction
+            lateral_factor2 = np.sin(angle2) * 0.4
+            deflection2 += np.array([lateral_factor2 * current_strength * 0.3, 0])
+            
+            x1 = x1_base + deflection1[0]
+            y1 = y1_base + deflection1[1]
+            x2 = x2_base + deflection2[0]
+            y2 = y2_base + deflection2[1]
+            
+            # Draw curved segment
+            segment_x = []
+            segment_y = []
+            for t in np.linspace(0, 1, 20):
+                x_linear = x1 + t * (x2 - x1)
+                y_linear = y1 + t * (y2 - y1)
+                
+                # Add catenary-like sag
+                sag = 0.8 * (1 - (2*t - 1)**2)
+                
+                # Perpendicular vector pointing inward
+                panel_dx = x2 - x1
+                panel_dy = y2 - y1
+                panel_length = np.sqrt(panel_dx**2 + panel_dy**2)
+                if panel_length > 0:
+                    perp_x = -panel_dy / panel_length
+                    perp_y = panel_dx / panel_length
+                    mid_x = (x1 + x2) / 2
+                    mid_y = (y1 + y2) / 2
+                    to_center_x = cage_center[0] - mid_x
+                    to_center_y = cage_center[1] - mid_y
+                    if perp_x * to_center_x + perp_y * to_center_y < 0:
+                        perp_x = -perp_x
+                        perp_y = -perp_y
+                    
+                    segment_x.append(x_linear + sag * perp_x)
+                    segment_y.append(y_linear + sag * perp_y)
+                else:
+                    segment_x.append(x_linear)
+                    segment_y.append(y_linear)
+            
+            cage_x.extend(segment_x)
+            cage_y.extend(segment_y)
+        
+        ax_map.plot(cage_x, cage_y, 'b-', linewidth=2, label='Bent Cage')
         
         # Draw fish
         ax_map.scatter(fish_positions[:, 0], fish_positions[:, 1], c='orange', s=3, alpha=0.6, label='Fish')
