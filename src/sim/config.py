@@ -49,10 +49,10 @@ class CageConfig:
     ROPE_THICKNESS = 0.04       # Thickness of structural ropes (meters)
                                 # Thicker = stronger reflections at rope positions
     
-    NET_REFLECTIVITY = 0.25     # Net mesh reflectivity (0-1)
+    NET_REFLECTIVITY = 0.20     # Net mesh reflectivity (0-1)
                                 # Higher = brighter net in sonar image
     
-    ROPE_REFLECTIVITY = 0.30    # Structural rope reflectivity (0-1)
+    ROPE_REFLECTIVITY = 0.25    # Structural rope reflectivity (0-1)
                                 # Higher = structural elements more visible
     
     HAS_BOTTOM = True           # Whether cage has bottom net (vs open bottom)
@@ -191,12 +191,13 @@ class SonarConfig:
                                  # More = better angular resolution, slower
     
     # Beam cone spreading (multibeam sonar characteristic)
-    BEAMWIDTH_DEG = 10          # Beam cone half-angle (degrees)
+    BEAMWIDTH_DEG = 3.0         # Beam cone half-angle (degrees)
                                 # At range R, beam footprint diameter = 2 * R * tan(beamwidth)
                                 # Larger = more spreading, lower resolution at far ranges
     
-    RAYS_PER_BEAM = 5           # Number of rays to cast per beam for cone sampling
+    RAYS_PER_BEAM = 3           # Number of rays to cast per beam for cone sampling
                                 # More = better cone coverage, slower (1 = pencil beam)
+                                # 3 = good balance of quality and speed
     
     # Multi-hit tracing (for returns behind porous objects like nets)
     MAX_HITS_PER_RAY = 4        # Maximum hits to trace along each ray (2-3 recommended)
@@ -230,21 +231,21 @@ class SonarConfig:
                                 # Higher = faster signal decay with distance
                                 # 0.05 typical for ~700 kHz in seawater
     
-    PULSE_LENGTH_BINS = 15     # Pulse length in range bins for deposition spread
+    PULSE_LENGTH_BINS = 2.0     # Pulse length in range bins for deposition spread
                                 # Simulates finite pulse duration + surface scattering
                                 # 1-2 bins = realistic spread (±1-2 bins from hit center)
                                 # 0 = delta function (unrealistically sharp)
     
-    RANGE_TAIL_BINS = 15       # Exponential tail extending in range after hit
+    RANGE_TAIL_BINS = 5         # Exponential tail extending in range after hit
                                 # Simulates receiver integration time and reverberation
                                 # Creates continuous signal instead of discrete hits
                                 # 5-10 bins = realistic continuous appearance
                                 # 0 = sharp cutoff (binary appearance)
     
-    ANGULAR_SPREAD_BEAMS = 2.0  # Angular spread in beams for acoustic deposition
+    ANGULAR_SPREAD_BEAMS = 1.0  # Angular spread in beams for acoustic deposition
                                 # Simulates beam width and target extent
                                 # Returns spread across neighboring beams
-                                # 2-3 beams = realistic spread
+                                # 1-2 beams = realistic spread
                                 # 0 = single beam (unrealistically sharp)
     
     EDGE_STRENGTH_DB = 10.0     # Edge rolloff for beam pattern (dB)
@@ -267,13 +268,14 @@ class SignalProcessingConfig:
     """Realistic sonar effects and signal processing parameters."""
     
     # Speckle noise (coherent interference)
-    SPECKLE_LOOKS = 5         # Number of looks for speckle averaging (1-8)
+    SPECKLE_LOOKS = 12        # Number of looks for speckle averaging (1-8)
                                 # 1.0 = very grainy/scattery (raw sonar)
                                 # 2-3 = moderate texture
                                 # 4-8 = smooth (multi-looked)
+                                # 12+ = very smooth, minimal texture
     
     # Noise floor
-    NOISE_FLOOR = 3e-6          # Receiver noise level (linear scale)
+    NOISE_FLOOR = 5e-7          # Receiver noise level (linear scale)
                                 # Higher = more background noise
     
     # Shadowing (acoustic occlusion behind strong targets)
@@ -292,16 +294,17 @@ class SignalProcessingConfig:
     
     # Enhancement parameters
     PERCENTILE_LOW = 0.05       # Lower percentile for contrast stretching
-    PERCENTILE_HIGH = 0.8     # Upper percentile for contrast stretching
-    GAMMA_CORRECTION = 0.7     # Gamma for final display enhancement
+    PERCENTILE_HIGH = 0.70      # Upper percentile for contrast stretching
+                                # Lower = clips stronger signals more
+    GAMMA_CORRECTION = 0.8      # Gamma for final display enhancement
                                 # Lower = brighter midtones, higher = more contrast
     
     # Water column clutter (injected directly into mu)
-    CLUTTER_DENSITY = 0.0005    # Probability of clutter per range-beam cell
+    CLUTTER_DENSITY = 0.00005   # Probability of clutter per range-beam cell
                                 # Higher = more sparse returns in water column
     
-    CLUTTER_INTENSITY_MIN = 0.02  # Minimum clutter reflectivity
-    CLUTTER_INTENSITY_MAX = 0.06  # Maximum clutter reflectivity
+    CLUTTER_INTENSITY_MIN = 0.01  # Minimum clutter reflectivity
+    CLUTTER_INTENSITY_MAX = 0.02  # Maximum clutter reflectivity
     
     CLUTTER_RANGE_DECAY = 0.02  # Clutter density decay with range (1/m)
                                 # Higher = less clutter at far range

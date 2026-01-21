@@ -60,7 +60,7 @@ def get_default_sonar_config():
     return {
         'pos': np.array([0.0, -10.0, -12.0], dtype=float),  # Further back and deeper for larger cage
         'rpy': np.array([0.0, 0.0, np.deg2rad(90)], dtype=float),  # Looking toward cage
-        'range_m': 20.0,  # Shorter range for focused view
+        'range_m': 10.0,  # Maximum visibility range
         'hfov_deg': 120.0,
         'h_beams': 256,
         'enable_multipath': True,

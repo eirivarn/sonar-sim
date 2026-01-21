@@ -39,7 +39,7 @@ def capture_sonar_frame(sonar, world, colormap='viridis'):
     
     # Configure polar plot
     ax.set_theta_zero_location('N')
-    ax.set_theta_direction(-1)
+    ax.set_theta_direction(1)  # Counter-clockwise (standard math convention)
     
     hfov_rad = np.deg2rad(sonar.hfov_deg)
     angles = np.linspace(-hfov_rad/2, hfov_rad/2, sonar.h_beams)

@@ -62,7 +62,7 @@ class FishFarmViewer:
         self.last_update = time.time()
         self.paused = False
         self.show_fish = True  # Toggle fish visibility
-        self.colormap = 'viridis'  # Sonar colormap theme
+        self.colormap = 'gray'  # Sonar colormap theme
         self.available_cmaps = ['hot', 'viridis', 'plasma', 'inferno', 'turbo', 'gray', 'bone', 'ocean']
         
         # Display sizing
@@ -77,7 +77,7 @@ class FishFarmViewer:
         
         # Setup polar plot
         self.ax_polar.set_theta_zero_location('N')
-        self.ax_polar.set_theta_direction(-1)
+        self.ax_polar.set_theta_direction(1)  # Counter-clockwise (standard math convention)
         
         # Connect keyboard to all figures
         for fig in [self.fig_3d, self.fig_polar]:
@@ -257,7 +257,7 @@ class FishFarmViewer:
         # Update polar sonar view
         self.ax_polar.clear()
         self.ax_polar.set_theta_zero_location('N')
-        self.ax_polar.set_theta_direction(-1)
+        self.ax_polar.set_theta_direction(1)  # Counter-clockwise (standard math convention)
         
         hfov_rad = np.deg2rad(self.sonar.hfov_deg)
         angles = np.linspace(-hfov_rad/2, hfov_rad/2, self.sonar.h_beams)
