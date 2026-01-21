@@ -15,8 +15,16 @@ class Hit:
 class Primitive:
     obj_id: str
     reflectivity: float = 0.75  # Default reflectivity
+    
     def intersect(self, ro: np.ndarray, rd: np.ndarray) -> Hit | None:
         raise NotImplementedError
+    
+    def bounds_sphere(self) -> tuple[np.ndarray, float] | None:
+        """Return (center, radius) bounding sphere for broadphase culling.
+        
+        Returns None if object is unbounded (e.g., infinite plane).
+        """
+        return None  # Default: no bounds (always test)
 
 @dataclass
 class Plane(Primitive):
@@ -61,6 +69,9 @@ class Sphere(Primitive):
         p = ro + t * rd
         n = (p - self.center) / self.radius
         return Hit(t=float(t), point=p, normal=n, obj_id=self.obj_id, reflectivity=self.reflectivity)
+    
+    def bounds_sphere(self) -> tuple[np.ndarray, float]:
+        return (self.center, self.radius)
 
 @dataclass
 class AABB(Primitive):

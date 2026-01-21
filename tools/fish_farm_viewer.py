@@ -18,8 +18,8 @@ from src.sim.fish_cage import NetCage, FishSchool
 from src.sim.primitives import Plane, Sphere
 from src.sim.fish_farm_world import build_fish_farm_world, get_default_sonar_config
 from src.sim.visualization import draw_cage_wireframe, draw_plane, draw_sonar_position, draw_sonar_fov
+from src.sim.config import FishConfig, VisualizationConfig, SonarConfig, SimulationConfig
 from src.sim.math3d import rpy_to_R
-from src.sim.config import SonarConfig, VisualizationConfig, SimulationConfig
 
 
 class FishFarmViewer:
@@ -37,6 +37,7 @@ class FishFarmViewer:
         J/L: Roll left/right
         R: Reset position
         SPACE: Pause/unpause animation
+        F: Toggle fish visibility
         N: Toggle noise
         M: Toggle multipath
         C: Cycle colormap
@@ -60,14 +61,18 @@ class FishFarmViewer:
         
         self.last_update = time.time()
         self.paused = False
+        self.show_fish = True  # Toggle fish visibility
         self.colormap = 'viridis'  # Sonar colormap theme
         self.available_cmaps = ['hot', 'viridis', 'plasma', 'inferno', 'turbo', 'gray', 'bone', 'ocean']
         
+        # Display sizing
+        self.sonar_display_size = VisualizationConfig.SONAR_DISPLAY_SIZE
+        
         # Create separate figures
-        self.fig_3d = plt.figure(figsize=(10, 8), num='3D View - Fish Farm')
+        self.fig_3d = plt.figure(figsize=VisualizationConfig.WORLD_VIEW_SIZE, num='3D View - Fish Farm')
         self.ax3d = self.fig_3d.add_subplot(111, projection='3d')
         
-        self.fig_polar = plt.figure(figsize=(8, 8), num='Polar Sonar View')
+        self.fig_polar = plt.figure(figsize=(self.sonar_display_size, self.sonar_display_size), num='Polar Sonar View')
         self.ax_polar = self.fig_polar.add_subplot(111, projection='polar')
         
         # Setup polar plot
@@ -89,9 +94,12 @@ class FishFarmViewer:
                      'I/K: Pitch\n'
                      'R: Reset\n'
                      'SPACE: Pause\n'
+                     'F: Toggle Fish\n'
                      'N: Toggle Noise\n'
                      'M: Toggle Multipath\n'
-                     'C: Cycle Colormap',
+                     'C: Cycle Colormap\n'
+                     '+/-: Display Size\n'
+                     '[/]: Range',
                      fontsize=9, verticalalignment='top', 
                      bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.9),
                      family='monospace')
@@ -147,6 +155,28 @@ class FishFarmViewer:
         elif event.key == 'm':
             self.sonar.enable_multipath = not self.sonar.enable_multipath
             print(f"Multipath: {'ON' if self.sonar.enable_multipath else 'OFF'}")
+        elif event.key == 'f':
+            self.show_fish = not self.show_fish
+            # Toggle fish in world for sonar detection
+            FishConfig.ENABLE_FISH_IN_WORLD = self.show_fish
+            # Rebuild world to add/remove fish
+            from src.sim.fish_farm_world import build_fish_farm_world
+            self.world, self.net_cage, self.fish_school = build_fish_farm_world()
+            print(f"Fish: {'ON' if self.show_fish else 'OFF'} (sonar {'detects' if self.show_fish else 'ignores'} fish)")
+        elif event.key == '+':
+            self.sonar_display_size = min(self.sonar_display_size + 1, 20)
+            self.fig_polar.set_size_inches(self.sonar_display_size, self.sonar_display_size)
+            print(f"Sonar display size: {self.sonar_display_size}")
+        elif event.key == '-':
+            self.sonar_display_size = max(self.sonar_display_size - 1, 4)
+            self.fig_polar.set_size_inches(self.sonar_display_size, self.sonar_display_size)
+            print(f"Sonar display size: {self.sonar_display_size}")
+        elif event.key == '[':
+            self.sonar.range_m = max(self.sonar.range_m - 5, 5)
+            print(f"Sonar range: {self.sonar.range_m}m")
+        elif event.key == ']':
+            self.sonar.range_m = min(self.sonar.range_m + 5, 100)
+            print(f"Sonar range: {self.sonar.range_m}m")
     
     def animate(self, frame):
         """Animation update function."""
@@ -168,8 +198,7 @@ class FishFarmViewer:
         """Redraw all views."""
         # Get scan data
         scan_data = self.sonar.scan_2d(self.world)
-        distances = np.array(scan_data['distances'])
-        intensities = np.array(scan_data['intensities'])
+        polar_image = np.array(scan_data['polar_image'])  # (range_bins, h_beams)
         
         # Clear and redraw 3D view
         self.ax3d.clear()
@@ -198,10 +227,11 @@ class FishFarmViewer:
                 z = obj.center[2] + obj.radius * np.outer(np.ones(np.size(u)), np.cos(v))
                 self.ax3d.plot_surface(x, y, z, color='orange', alpha=0.6)
         
-        # Draw fish
-        fish_positions = np.array([f.position for f in self.fish_school.fish])
-        self.ax3d.scatter(fish_positions[:, 0], fish_positions[:, 1], fish_positions[:, 2],
-                         c='red', s=10, alpha=0.6, marker='o')
+        # Draw fish (if enabled)
+        if self.show_fish:
+            fish_positions = np.array([f.position for f in self.fish_school.fish])
+            self.ax3d.scatter(fish_positions[:, 0], fish_positions[:, 1], fish_positions[:, 2],
+                             c='red', s=10, alpha=0.6, marker='o')
         
         # Draw sonar
         pos = self.sonar.pos
@@ -214,7 +244,8 @@ class FishFarmViewer:
         self.ax3d.set_xlabel('X (m)')
         self.ax3d.set_ylabel('Y (m)')
         self.ax3d.set_zlabel('Z (m)')
-        self.ax3d.set_title(f'Fish Farm - {len(self.fish_school.fish)} fish\n'
+        fish_status = f'{len(self.fish_school.fish)} fish' if self.show_fish else 'fish hidden'
+        self.ax3d.set_title(f'Fish Farm - {fish_status}\n'
                            f'Pos: ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})')
         
         # Set view limits based on cage
@@ -236,21 +267,10 @@ class FishFarmViewer:
         self.ax_polar.set_thetamax(self.sonar.hfov_deg/2)
         self.ax_polar.set_ylim(0, self.sonar.range_m)
         
-        range_bins = VisualizationConfig.POLAR_RANGE_BINS
-        signal_grid = np.zeros((range_bins, len(angles)))
-        
-        for i, (d, intensity) in enumerate(zip(distances, intensities)):
-            if d < self.sonar.range_m:
-                r_idx = int((d / self.sonar.range_m) * (range_bins - 1))
-                if 0 <= r_idx < range_bins:
-                    signal_grid[r_idx, i] = intensity * VisualizationConfig.INTENSITY_SCALE
-        
-        # Apply smoothing
-        signal_grid = gaussian_filter(signal_grid, sigma=VisualizationConfig.POLAR_GAUSSIAN_SIGMA)
-        
-        theta_mesh, r_mesh = np.meshgrid(angles, np.linspace(0, self.sonar.range_m, range_bins))
-        self.ax_polar.contourf(theta_mesh, r_mesh, signal_grid, 
-                              levels=VisualizationConfig.CONTOUR_LEVELS, 
+        # Use the polar image directly (already has realistic effects applied)
+        theta_mesh, r_mesh = np.meshgrid(angles, np.linspace(0, self.sonar.range_m, polar_image.shape[0]))
+        self.ax_polar.contourf(theta_mesh, r_mesh, polar_image, 
+                              levels=20, 
                               cmap=self.colormap)
         self.ax_polar.set_title(f'Imaging Sonar (Polar)\nColormap: {self.colormap}')
         

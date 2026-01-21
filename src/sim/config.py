@@ -72,6 +72,10 @@ class FishConfig:
     NUM_FISH = 1000             # Total number of fish in simulation
                                 # More = denser schools but slower simulation
     
+    # Visibility
+    ENABLE_FISH_IN_WORLD = True # Toggle fish in sonar simulation
+                                # False = fish not added to world (no sonar detection)
+    
     # Movement
     ENABLE_FISH_MOVEMENT = False # Toggle fish swimming on/off
                                 # False = static fish positions (for testing)
@@ -176,7 +180,7 @@ class SonarConfig:
     """Imaging sonar sensor parameters."""
     
     # Position and orientation
-    SONAR_POSITION = np.array([0.0, 0.0, -5.0])  # Position (x, y, z) in meters
+    SONAR_POSITION = np.array([25.0, 0.0, -5.0])  # Position (x, y, z) in meters
     SONAR_ORIENTATION = np.array([0.0, 0.0, 90.0])  # Roll, pitch, yaw (degrees)
     
     # Field of view
@@ -187,15 +191,34 @@ class SonarConfig:
                                 # More = better angular resolution, slower
     
     # Beam cone spreading (multibeam sonar characteristic)
-    BEAMWIDTH_DEG = 1.5         # Beam cone half-angle (degrees)
+    BEAMWIDTH_DEG = 10          # Beam cone half-angle (degrees)
                                 # At range R, beam footprint diameter = 2 * R * tan(beamwidth)
                                 # Larger = more spreading, lower resolution at far ranges
     
     RAYS_PER_BEAM = 5           # Number of rays to cast per beam for cone sampling
                                 # More = better cone coverage, slower (1 = pencil beam)
     
+    # Multi-hit tracing (for returns behind porous objects like nets)
+    MAX_HITS_PER_RAY = 3        # Maximum hits to trace along each ray (2-3 recommended)
+                                # Higher = see fish behind nets, slower
+    
+    MIN_HIT_STRENGTH = 0.025     # Minimum signal strength to continue tracing
+                                # Lower = trace weaker returns, slower
+    
+    TRANSMISSION_BOOST = 0.8    # Multiplier for transmitted signal through objects (0.5-2.0)
+                                # 1.0 = realistic (transmitted = 1 - reflectivity)
+                                # >1.0 = less signal loss, see through objects better
+                                # <1.0 = more signal loss, objects more opaque
+    
+    # Beam pattern weighting
+    BEAM_PATTERN_SIGMA_DEG = 0.8  # Gaussian sigma for beam pattern weighting (degrees)
+                                  # Controls how rays in cone are weighted by angle
+    
+    USE_DETERMINISTIC_CONE = True  # Use precomputed cone pattern (vs random per frame)
+                                   # True = less flicker, more realistic
+    
     # Range settings
-    RANGE_M = 35.0              # Maximum range (meters)
+    RANGE_M = 10.0              # Maximum range (meters)
                                 # Limited by physics: absorption, spreading loss
     
     RANGE_BINS = 1024           # Number of range bins (samples per beam)
@@ -210,12 +233,11 @@ class SonarConfig:
     EDGE_STRENGTH_DB = 6.0      # Edge rolloff for beam pattern (dB)
                                 # Higher = sharper beam edges, more sidelobe
     
-    # Legacy parameters (overridden by realistic mode)
-    ATTENUATION = 0.005         # Simple attenuation (legacy)
-    NOISE_STD = 0.1             # Range noise std dev (meters, legacy)
-    
     # Feature flags
     ENABLE_MULTIPATH = True     # Enable multipath reflections (seafloor bounce)
+    ENABLE_STRUCTURED_MULTIPATH = True  # Use mirror method for surface/seafloor (vs generic bounces)
+    SURFACE_REFLECTIVITY = 0.8  # Surface (air-water) reflection coefficient
+    
     ENABLE_NOISE = True         # Enable measurement noise
     ENABLE_REALISTIC_EFFECTS = True  # Enable full realistic processing pipeline
 
@@ -234,12 +256,12 @@ class SignalProcessingConfig:
                                 # 4-8 = smooth (multi-looked)
     
     # Noise floor
-    NOISE_FLOOR = 3e-5          # Receiver noise level (linear scale)
+    NOISE_FLOOR = 3e-6          # Receiver noise level (linear scale)
                                 # Higher = more background noise
     
     # Shadowing (acoustic occlusion behind strong targets)
     SHADOW_THRESHOLD_PERCENTILE = 0.995  # Percentile for shadow threshold
-                                          # Only strongest returns cast shadows
+                                         # Only strongest returns cast shadows
     
     SHADOW_STRENGTH = 0.50      # Shadow attenuation factor (0-1)
                                 # Higher = darker shadows behind objects
@@ -257,12 +279,15 @@ class SignalProcessingConfig:
     GAMMA_CORRECTION = 0.75     # Gamma for final display enhancement
                                 # Lower = brighter midtones, higher = more contrast
     
-    # Beam and range point spread functions (PSF)
-    BEAM_PSF_SIGMA = 1.2        # Beam blurring (angular resolution limit)
-                                # Higher = more angular blur
+    # Water column clutter (injected directly into mu)
+    CLUTTER_DENSITY = 0.0008    # Probability of clutter per range-beam cell
+                                # Higher = more sparse returns in water column
     
-    RANGE_PSF_SIGMA = 0.8       # Range blurring (range resolution limit)
-                                # Higher = more range blur
+    CLUTTER_INTENSITY_MIN = 0.02  # Minimum clutter reflectivity
+    CLUTTER_INTENSITY_MAX = 0.08  # Maximum clutter reflectivity
+    
+    CLUTTER_RANGE_DECAY = 0.02  # Clutter density decay with range (1/m)
+                                # Higher = less clutter at far range
 
 
 # ==============================================================================
@@ -285,23 +310,11 @@ class VisualizationConfig:
     NUM_HORIZONTAL_RINGS = 10   # Number of horizontal rings in wireframe
                                 # More = shows depth structure better
     
-    # Sonar polar display
-    POLAR_RANGE_BINS = 100      # Range bins for polar plot visualization
-                                # Lower = faster rendering, higher = more detail
+    # Display size defaults
+    SONAR_DISPLAY_SIZE = 8      # Sonar polar display size (inches)
+                                # Use +/- keys to adjust during runtime
     
-    POLAR_GAUSSIAN_SIGMA = 1.5  # Gaussian smoothing for polar display
-                                # Lower = more texture/scatter, higher = smoother
-                                # 0 = no smoothing (very grainy)
-    
-    INTENSITY_SCALE = 50        # Multiplier for display intensity
-                                # Higher = brighter overall image
-    
-    CONTOUR_LEVELS = 20         # Number of contour levels for polar plot
-                                # More = smoother gradients, fewer = banded
-    
-    # Colormap
-    DEFAULT_COLORMAP = 'turbo'  # Default colormap for sonar display
-                                # Options: 'turbo', 'viridis', 'gray', 'hot', etc.
+    WORLD_VIEW_SIZE = (10, 8)   # 3D world view size (width, height in inches)
 
 
 # ==============================================================================

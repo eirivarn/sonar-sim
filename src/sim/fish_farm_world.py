@@ -43,7 +43,10 @@ def build_fish_farm_world() -> tuple[World, NetCage, FishSchool]:
         reflectivity=FishConfig.FISH_REFLECTIVITY,
         neighbor_distance=FishConfig.NEIGHBOR_DISTANCE
     )
-    w.objects.append(fish_school)
+    
+    # Add fish to world only if enabled in config
+    if FishConfig.ENABLE_FISH_IN_WORLD:
+        w.objects.append(fish_school)
     
     # WATER COLUMN CLUTTER - simulates plankton, particles, suspended matter
     # Covers the entire operational area with probabilistic scatterers
@@ -67,7 +70,7 @@ def get_default_sonar_config():
     """Get default sonar configuration for fish farm viewing.
     
     Returns:
-        dict: Sonar configuration parameters
+        dict: SonarV2 configuration parameters
     """
     return {
         'pos': np.array([0.0, -10.0, -12.0], dtype=float),  # Further back and deeper for larger cage
@@ -75,10 +78,7 @@ def get_default_sonar_config():
         'range_m': 20.0,  # Shorter range for focused view
         'hfov_deg': 120.0,
         'h_beams': 256,
-        'attenuation': 0.005,
-        'noise_std': 0.15,
         'enable_multipath': True,
-        'enable_noise': True,
         'enable_realistic_effects': True,
         'range_bins': 1024,  
         'alpha_db_per_m': 0.05,

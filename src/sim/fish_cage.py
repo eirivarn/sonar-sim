@@ -229,6 +229,18 @@ class NetCage(Primitive):
         # Clamp to reasonable range
         return np.clip(factor, 0.7, 1.6)
     
+    def bounds_sphere(self) -> tuple[np.ndarray, float]:
+        """Return bounding sphere for broadphase culling."""
+        # Center at mid-depth
+        center = self.center.copy()
+        center[2] -= self.depth / 2
+        
+        # Radius encompasses largest dimension
+        max_radius = max(self.radius_top, self.radius_bottom)
+        radius = np.sqrt(max_radius**2 + (self.depth / 2)**2) * 1.1  # 10% margin
+        
+        return (center, radius)
+    
     def _intersect_bottom_net(self, ro: np.ndarray, rd: np.ndarray) -> Hit | None:
         """Intersect with the bottom net (horizontal plane with mesh)."""
         bottom_z = self.center[2] - self.depth
@@ -502,6 +514,17 @@ class FishSchool(Primitive):
         if self.use_spatial_grid:
             self.spatial_grid = {}
             self._rebuild_spatial_grid()
+    
+    def bounds_sphere(self) -> tuple[np.ndarray, float]:
+        """Return bounding sphere for broadphase culling."""
+        # Bounding sphere around cage
+        center = self.cage_center.copy()
+        center[2] -= self.cage_depth / 2
+        
+        max_radius = max(self.cage_radius_top, self.cage_radius_bottom)
+        radius = np.sqrt(max_radius**2 + (self.cage_depth / 2)**2) * 1.1
+        
+        return (center, radius)
     
     def update(self, dt: float):
         """Update fish positions with schooling behavior."""
