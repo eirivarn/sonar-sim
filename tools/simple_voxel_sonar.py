@@ -23,10 +23,13 @@ class Material:
 
 # Material library
 EMPTY = Material("empty", 0.0, 0.0, 0.0)
-NET = Material("net", 0.3, 0.2, 0.1)
-ROPE = Material("rope", 0.8, 0.4, 0.2)
-FISH = Material("fish", 0.7, 0.5, 0.3)  # Increased reflectivity from 0.3 to 0.5
-WALL = Material("wall", 1.0, 0.5, 0.4)
+NET = Material("net", 0.3, 0.2, 0.5)  # Increased absorption for shadow
+ROPE = Material("rope", 0.8, 0.4, 0.8)  # Strong absorption
+FISH = Material("fish", 0.7, 0.5, 0.6)  # Fish cast shadows
+WALL = Material("wall", 1.0, 0.5, 1.0)
+DEBRIS_LIGHT = Material("debris_light", 0.8, 0.6, 0.3)  # Light debris - bright
+DEBRIS_MEDIUM = Material("debris_medium", 0.9, 0.7, 0.7)  # Medium debris - brighter
+DEBRIS_HEAVY = Material("debris_heavy", 1.0, 0.8, 1.2)  # Heavy debris - very bright
 
 
 class VoxelGrid:
@@ -111,6 +114,16 @@ class VoxelGrid:
         """Clear all fish material from grid (for dynamic updates)."""
         # Use reflectivity to identify fish (FISH has 0.5, NET has 0.2, ROPE has 0.4)
         mask = np.abs(self.reflectivity - FISH.reflectivity) < 0.01
+        self.density[mask] = EMPTY.density
+        self.reflectivity[mask] = EMPTY.reflectivity
+        self.absorption[mask] = EMPTY.absorption
+    
+    def clear_debris(self):
+        """Clear all debris material from grid (for dynamic updates)."""
+        # Clear debris by checking for debris reflectivity values
+        mask = (np.abs(self.reflectivity - DEBRIS_LIGHT.reflectivity) < 0.01) | \
+               (np.abs(self.reflectivity - DEBRIS_MEDIUM.reflectivity) < 0.01) | \
+               (np.abs(self.reflectivity - DEBRIS_HEAVY.reflectivity) < 0.01)
         self.density[mask] = EMPTY.density
         self.reflectivity[mask] = EMPTY.reflectivity
         self.absorption[mask] = EMPTY.absorption
@@ -257,7 +270,8 @@ class VoxelSonar:
                 aspect_variation = 0.5 + 0.8 * np.random.randn()  # Increased variation (~55% std dev)
                 aspect_variation = np.clip(aspect_variation, 0.2, 2.0)  # Wider range
                 
-                # Backscatter strength with temporal variations
+                # GEOMETRIC SHADOWING: Objects in front block energy to objects behind
+                # Scatter is proportional to remaining energy budget
                 scatter = energy * density * reflectivity * step_size * speckle * aspect_variation
                 
                 # Two-way propagation loss
@@ -271,9 +285,12 @@ class VoxelSonar:
                 if 0 <= bin_idx < len(output_bins):
                     output_bins[bin_idx] += return_energy
             
-            # ABSORPTION: Reduce forward energy
+            # ABSORPTION: Reduce forward energy (creates shadows)
             if density > 0.01:
-                energy *= np.exp(-absorption * step_size)
+                # Both absorption and scattering reduce forward energy
+                energy *= np.exp(-absorption * step_size * 5.0)  # Stronger absorption
+                energy *= (1.0 - density * reflectivity * step_size * 3.0)  # Scattering loss
+                energy = max(0.0, energy)
             
             # Move forward
             current_pos += direction * step_size
@@ -359,27 +376,80 @@ def create_demo_scene() -> VoxelGrid:
         vy = swim_speed * np.sin(swim_angle)
         
         # Fish size
-        fish_length = 0.4 + np.random.rand() * 0.4  # 40-80cm long
+        fish_length = 0.3 + np.random.rand() * 0.1  # 30-40cm long
         fish_width = fish_length * 0.25  # Width is 25% of length
+        
+        # Assign species (A, B, C) evenly
+        species = ['A', 'B', 'C'][_ % 3]
         
         fish_data.append({
             'pos': np.array([x, y]),
             'vel': np.array([vx, vy]),
             'orientation': swim_angle,
             'radii': np.array([fish_length, fish_width]),
-            'turn_timer': np.random.rand() * 100  # Random phase for turning
+            'turn_timer': np.random.rand() * 100,  # Random phase for turning
+            'species': species
+        })
+    
+    # Add floating debris - different sizes and materials
+    num_debris = 100  # Increased from 50
+    debris_data = []
+    debris_materials = [DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY]
+    
+    for i in range(num_debris):
+        # Random position within cage
+        angle = np.random.rand() * 2 * np.pi
+        r = np.random.rand() * cage_radius * 0.9
+        
+        x = cage_center[0] + r * np.cos(angle)
+        y = cage_center[1] + r * np.sin(angle)
+        
+        # Slow drift velocity
+        drift_angle = np.random.rand() * 2 * np.pi
+        drift_speed = 0.01 + np.random.rand() * 0.03  # 1-4 cm/frame
+        vx = drift_speed * np.cos(drift_angle)
+        vy = drift_speed * np.sin(drift_angle)
+        
+        # Random size (15-40cm) - increased for visibility
+        size = 0.15 + np.random.rand() * 0.25
+        
+        # Random material type
+        material = debris_materials[i % 3]
+        
+        debris_data.append({
+            'pos': np.array([x, y]),
+            'vel': np.array([vx, vy]),
+            'size': size,
+            'material': material
         })
     
     # Initial fish rendering
     for fish in fish_data:
         grid.set_ellipse(fish['pos'], fish['radii'], fish['orientation'], FISH)
     
+    # Initial debris rendering
+    for debris in debris_data:
+        grid.set_circle(debris['pos'], debris['size'], debris['material'])
+    
     # Debug: Count how many fish voxels were created
     fish_voxel_count = np.sum(np.abs(grid.reflectivity - FISH.reflectivity) < 0.01)
     print(f"Fish voxels created: {fish_voxel_count}")
     
-    # Return both grid and fish data
-    return grid, fish_data
+    # Add some larger objects (feed pipes, sensors, etc.)
+    # Vertical feed pipe
+    grid.set_box(
+        np.array([cage_center[0] - 0.15, cage_center[1] - 0.15]),
+        np.array([cage_center[0] + 0.15, cage_center[1] + 0.15]),
+        ROPE
+    )
+    
+    print(f"Created fish cage:")
+    print(f"  Center: {cage_center}")
+    print(f"  Radius: {cage_radius}m")
+    print(f"  Fish: {len(fish_data)}")
+    print(f"  Debris: {len(debris_data)}")
+    
+    return grid, fish_data, debris_data
 
 
 def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_radius: float):
@@ -387,27 +457,79 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
     # Clear existing fish
     grid.clear_fish()
     
+    # Species behavior parameters
+    # A: Schooling (strong same-species attraction)
+    # B: Solitary (avoid all fish)
+    # C: Mixed (moderate attraction to all)
+    behavior = {
+        'A': {'same_attract': 2.0, 'other_attract': 0.1, 'avoid': 0.8},
+        'B': {'same_attract': 0.0, 'other_attract': 0.0, 'avoid': 2.0},
+        'C': {'same_attract': 0.8, 'other_attract': 0.6, 'avoid': 1.0}
+    }
+    
     # Update each fish
-    for fish in fish_data:
+    for i, fish in enumerate(fish_data):
         # Update position
         fish['pos'] += fish['vel']
         
-        # Occasional direction changes
-        fish['turn_timer'] -= 1
-        if fish['turn_timer'] <= 0:
-            # Turn toward cage center with some randomness
-            to_center = cage_center - fish['pos']
-            to_center_angle = np.arctan2(to_center[1], to_center[0])
+        # Flocking behavior (computed every frame for responsiveness)
+        species = fish['species']
+        avoid_vec = np.zeros(2)
+        same_attract_vec = np.zeros(2)
+        other_attract_vec = np.zeros(2)
+        same_count = 0
+        other_count = 0
+        
+        # Check nearby fish (within 3m for efficiency)
+        for j, other in enumerate(fish_data):
+            if i == j:
+                continue
             
-            # Add randomness
-            new_angle = to_center_angle + (np.random.rand() - 0.5) * np.pi
+            diff = other['pos'] - fish['pos']
+            dist = np.linalg.norm(diff)
             
-            swim_speed = np.linalg.norm(fish['vel'])
-            fish['vel'][0] = swim_speed * np.cos(new_angle)
-            fish['vel'][1] = swim_speed * np.sin(new_angle)
-            fish['orientation'] = new_angle
+            if dist < 3.0 and dist > 0.01:
+                # Avoidance (short range)
+                if dist < 0.8:
+                    avoid_vec -= diff / (dist * dist + 0.1)
+                
+                # Attraction (medium range)
+                if dist < 3.0:
+                    if other['species'] == species:
+                        same_attract_vec += diff / (dist + 0.1)
+                        same_count += 1
+                    else:
+                        other_attract_vec += diff / (dist + 0.1)
+                        other_count += 1
+        
+        # Apply behaviors based on species
+        params = behavior[species]
+        steer = np.zeros(2)
+        
+        if same_count > 0:
+            steer += params['same_attract'] * same_attract_vec / same_count
+        if other_count > 0:
+            steer += params['other_attract'] * other_attract_vec / other_count
+        steer += params['avoid'] * avoid_vec
+        
+        # Add small random component
+        steer += (np.random.rand(2) - 0.5) * 0.3
+        
+        # Apply steering with momentum
+        if np.linalg.norm(steer) > 0.01:
+            fish['vel'] += steer * 0.03
             
-            fish['turn_timer'] = 50 + np.random.rand() * 100
+            # Limit speed
+            speed = np.linalg.norm(fish['vel'])
+            max_speed = 0.2
+            min_speed = 0.05
+            if speed > max_speed:
+                fish['vel'] = fish['vel'] / speed * max_speed
+            elif speed < min_speed:
+                fish['vel'] = fish['vel'] / speed * min_speed
+            
+            # Update orientation
+            fish['orientation'] = np.arctan2(fish['vel'][1], fish['vel'][0])
         
         # Keep fish inside cage bounds
         dx = fish['pos'][0] - cage_center[0]
@@ -424,19 +546,48 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
         
         # Draw fish at new position
         grid.set_ellipse(fish['pos'], fish['radii'], fish['orientation'], FISH)
+
+
+def update_debris(grid: VoxelGrid, debris_data: list, cage_center: np.ndarray, cage_radius: float):
+    """Update debris positions and redraw them in the grid."""
+    # Clear existing debris
+    grid.clear_debris()
     
-    print(f"Created fish cage:")
-    print(f"  Center: {cage_center}")
-    print(f"  Radius: {cage_radius}m")
-    print(f"  Fish: {len(fish_data)}")
-    
-    return grid, fish_data
+    # Update each debris piece
+    for debris in debris_data:
+        # Add random turbulence/drift
+        turbulence = (np.random.rand(2) - 0.5) * 0.008  # Small random drift
+        debris['vel'] += turbulence
+        
+        # Limit drift speed
+        speed = np.linalg.norm(debris['vel'])
+        max_speed = 0.05
+        if speed > max_speed:
+            debris['vel'] = debris['vel'] / speed * max_speed
+        
+        # Update position
+        debris['pos'] += debris['vel']
+        
+        # Keep debris inside cage bounds (bounce off walls)
+        dx = debris['pos'][0] - cage_center[0]
+        dy = debris['pos'][1] - cage_center[1]
+        dist_from_center = np.sqrt(dx*dx + dy*dy)
+        
+        if dist_from_center > cage_radius - 0.5:
+            # Reflect velocity off wall
+            normal = np.array([dx, dy]) / (dist_from_center + 0.001)
+            debris['vel'] = debris['vel'] - 2 * np.dot(debris['vel'], normal) * normal
+            # Also push back inside slightly
+            debris['pos'] = cage_center + normal * (cage_radius - 0.5)
+        
+        # Draw debris at new position
+        grid.set_circle(debris['pos'], debris['size'], debris['material'])
 
 
 def main():
     """Run interactive voxel sonar viewer."""
     print("Building fish farm cage scene (this may take a moment)...")
-    grid, fish_data = create_demo_scene()
+    grid, fish_data, debris_data = create_demo_scene()
     
     # Cage parameters for fish updates
     cage_center = np.array([25.0, 25.0])
@@ -479,6 +630,9 @@ def main():
         """Update sonar and map displays."""
         # Update fish positions
         update_fish(grid, fish_data, cage_center, cage_radius)
+        
+        # Update debris positions
+        update_debris(grid, debris_data, cage_center, cage_radius)
         
         # Extract current fish positions for map
         fish_positions = np.array([[f['pos'][0], f['pos'][1]] for f in fish_data])
