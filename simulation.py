@@ -164,12 +164,6 @@ Update Loop:
 5. update_display() redraws all three panels
 6. Repeat at animation_interval (100ms default)
 
-Performance:
-- Typical: 10 FPS for 300×300 grid, 512×256 sonar, 50 fish
-- Bottleneck: Ray marching in sonar.scan()
-- Optimization: Reduce range_bins or num_beams in config
-
-Dependencies: numpy, matplotlib
 """
 
 import matplotlib.pyplot as plt
@@ -178,11 +172,12 @@ from visualization import (setup_figure, update_display, create_keyboard_handler
                            setup_animation, print_controls)
 
 
-def main(scene_path='scenes.fish_cage_scene'):
+def main(scene_path='scenes.fish_cage_scene', save_run=None):
     """Run interactive voxel sonar viewer.
     
     Args:
         scene_path: Module path to scene file (e.g., 'scenes.fish_cage_scene')
+        save_run: Optional run name for saving data. If True, uses timestamp.
     """
     # Dynamically import the scene module
     import importlib
@@ -212,20 +207,61 @@ def main(scene_path='scenes.fish_cage_scene'):
         # range_m uses SONAR_CONFIG['range_m'] by default
     )
     
+    # Setup save directory if requested
+    save_dir = None
+    frame_counter = None
+    if save_run:
+        from pathlib import Path
+        from datetime import datetime
+        import json
+        
+        # Use timestamp if save_run is True, otherwise use provided name
+        if save_run is True:
+            run_name = datetime.now().strftime('%Y%m%d_%H%M%S')
+        else:
+            run_name = save_run
+        
+        # Create directory structure
+        save_dir = Path('data') / 'runs' / run_name
+        (save_dir / 'sonar').mkdir(parents=True, exist_ok=True)
+        (save_dir / 'ground_truth').mkdir(parents=True, exist_ok=True)
+        (save_dir / 'metadata').mkdir(parents=True, exist_ok=True)
+        
+        # Save run configuration
+        from config import SONAR_CONFIG, VISUALIZATION_CONFIG
+        run_config = {
+            'run_name': run_name,
+            'scene_path': scene_path,
+            'scene_type': scene_type,
+            'timestamp': datetime.now().isoformat(),
+            'sonar_config': SONAR_CONFIG,
+            'world_size': world_size,
+        }
+        with open(save_dir / 'run_config.json', 'w') as f:
+            json.dump(run_config, f, indent=2)
+        
+        frame_counter = {'count': 0}
+        print(f"\nSaving run data to: {save_dir}")
+        print("Data will be saved in:")
+        print(f"  - sonar/         (raw sonar images as .npy)")
+        print(f"  - ground_truth/  (material ID maps as .npy)")
+        print(f"  - metadata/      (frame metadata as .json)")
+        print()
+    
     # Setup visualization
     fig, ax_sonar, ax_map, ax_gt = setup_figure(scene_type)
     
     # Create keyboard handler
     on_key = create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, 
-                                     ax_sonar, ax_map, ax_gt, world_size)
+                                     ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
     fig.canvas.mpl_connect('key_press_event', on_key)
     
     # Initial display
-    update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size)
+    update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
     
     # Setup continuous animation
     anim = setup_animation(fig, sonar, grid, dynamic_objects, scene_module, 
-                          ax_sonar, ax_map, ax_gt, world_size)
+                          ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
     
     # Print controls
     print_controls()
@@ -240,6 +276,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run sonar simulation with different scenes')
     parser.add_argument('--scene', type=str, default='scenes.fish_cage_scene',
                        help='Scene module path (e.g., scenes.fish_cage_scene or scenes.street_scene)')
+    parser.add_argument('--save', type=str, nargs='?', const=True, default=None,
+                       help='Save run data. Optionally provide run name, otherwise uses timestamp.')
     
     args = parser.parse_args()
-    main(scene_path=args.scene)
+    main(scene_path=args.scene, save_run=args.save)

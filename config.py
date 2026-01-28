@@ -91,10 +91,10 @@ SCENE_CONFIG = {
     'world_size_m': 30.0,      # World is 30m x 30m
     'cage_center': [15.0, 15.0],  # Center of cage
     'cage_radius': 12.0,       # Cage radius in meters
-    'num_sides': 24,           # Number of cage panel segments
+    'num_sides': 12,           # Number of cage panel segments
     'current_direction': [0.0, 1.0],  # Southward
-    'current_strength': 2.0,   # Current deflection strength
-    'net_sag': 0.25,          # Maximum net sag in meters
+    'current_strength': 1.0,   # Current deflection strength
+    'net_sag': 0.1,          # Maximum net sag in meters
     
     # Fish parameters
     'num_fish': 200,           # Number of fish in cage

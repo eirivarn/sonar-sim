@@ -219,7 +219,7 @@ def setup_figure(scene_type: str):
     return fig, ax_sonar, ax_map, ax_gt
 
 
-def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size):
+def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None):
     """Update all display panels.
     
     Args:
@@ -231,6 +231,8 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
         ax_map: Map display axis
         ax_gt: Ground truth display axis
         world_size: Size of world for map display
+        save_dir: Optional directory to save frames
+        frame_counter: Optional dict with 'count' key to track frame numbers
     """
     # Update dynamic objects using scene's update function
     scene_module.update_scene(grid, dynamic_objects, sonar.position)
@@ -342,10 +344,44 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
         Patch(facecolor=np.array(material_colors[MATERIAL_ID_DEBRIS_LIGHT])/255, label='Debris'),
     ]
     ax_gt.legend(handles=legend_elements, loc='upper right', fontsize=7)
+    
+    # Save frames if save_dir is provided
+    if save_dir is not None and frame_counter is not None:
+        frame_num = frame_counter['count']
+        
+        # Save sonar image (raw float values)
+        sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
+        np.save(sonar_path, sonar_image_polar)
+        
+        # Save ground truth (uint8 material IDs)
+        gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
+        np.save(gt_path, ground_truth_map)
+        
+        # Save sonar metadata (position, direction) as JSON
+        import json
+        metadata = {
+            'frame': frame_num,
+            'sonar_position': sonar.position.tolist(),
+            'sonar_direction': sonar.direction.tolist(),
+            'range_m': sonar.range_m,
+            'fov_deg': sonar.fov_deg,
+        }
+        meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
+        with open(meta_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        frame_counter['count'] += 1
+        
+        if frame_num % 10 == 0:
+            print(f"Saved frame {frame_num}")
 
 
-def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size):
+def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None):
     """Create keyboard event handler function.
+    
+    Args:
+        save_dir: Optional directory to save frames
+        frame_counter: Optional dict with 'count' key
     
     Returns:
         Function that handles keyboard events
@@ -374,19 +410,23 @@ def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar
         else:
             return
         
-        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size)
+        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
     
     return on_key
 
 
-def setup_animation(fig, sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size):
+def setup_animation(fig, sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None):
     """Setup matplotlib animation for continuous updates.
+    
+    Args:
+        save_dir: Optional directory to save frames
+        frame_counter: Optional dict with 'count' key
     
     Returns:
         FuncAnimation object
     """
     def anim_update(frame):
-        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size)
+        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
         return []
     
     anim_interval = VISUALIZATION_CONFIG['animation_interval']

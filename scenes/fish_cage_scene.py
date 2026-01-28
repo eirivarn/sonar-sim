@@ -20,14 +20,14 @@ def create_scene():
     # Create 30m x 30m world at 10cm resolution (300×300 voxels)
     grid = VoxelGrid(300, 300, voxel_size=0.1)
     
-    # Net cage parameters (centered at 15, 15)
-    cage_center = np.array([15.0, 15.0])
-    cage_radius = 12.0  # 12m radius (24m diameter)
-    num_sides = 24
+    # Net cage parameters - read from config
+    cage_center = np.array(SCENE_CONFIG['cage_center'])
+    cage_radius = SCENE_CONFIG['cage_radius']
+    num_sides = SCENE_CONFIG['num_sides']
     
-    # Current effect
-    current_direction = np.array([0.0, 1.0])  # Southward
-    current_strength = 6.5
+    # Current effect - read from config
+    current_direction = np.array(SCENE_CONFIG['current_direction'])
+    current_strength = SCENE_CONFIG['current_strength']
     
     # Create circular net panels with current deflection
     for i in range(num_sides):
