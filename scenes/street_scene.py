@@ -155,15 +155,12 @@ def create_scene():
     
     return {
         'grid': grid,
-        'sonar_start_pos': np.array([world_size/2, world_size/2 - 4.0]),
-        'sonar_start_dir': np.array([0.0, 1.0]),
-        'sonar_range': 25.0,
         'world_size': world_size,
         'scene_type': 'street',
+        'sonar_start_pos': np.array([world_size/2, world_size/2 - 4.0]),
+        'sonar_start_dir': np.array([0.0, 1.0]),
         'dynamic_objects': {
             'car_data': car_data,
-            'street_width': street_width,
-            'street_center_y': street_center_y,
         }
     }
 
@@ -180,8 +177,10 @@ def render_map(ax, scene_data, sonar):
     """Render the street map view."""
     import matplotlib.pyplot as plt
     
-    street_width = scene_data['street_width']
-    street_center_y = scene_data['street_center_y']
+    world_size = STREET_SCENE_CONFIG['world_size_m']
+    street_width = STREET_SCENE_CONFIG['street_width']
+    street_center_y = world_size / 2
+    car_data = scene_data['car_data']
     car_data = scene_data['car_data']
     world_size = STREET_SCENE_CONFIG['world_size_m']
     

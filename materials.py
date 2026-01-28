@@ -1,4 +1,71 @@
-"""Material definitions and properties for sonar simulation."""
+"""Material definitions and acoustic properties for sonar simulation.
+
+OVERVIEW:
+---------
+This module defines the material system used throughout the simulation. Each material
+has acoustic properties that determine how sonar waves interact with it.
+
+MATERIAL PROPERTIES:
+-------------------
+- density (0-1): How much matter is present. Higher density = more backscatter.
+  Example: FISH=0.3 (soft), METAL=0.9 (solid)
+  
+- reflectivity (0-1): Acoustic impedance mismatch - how much energy bounces back.
+  Example: NET=0.4 (moderate), METAL=0.85 (high)
+  
+- absorption (0-1): Energy loss per meter traveled through material.
+  Higher absorption creates acoustic shadows behind objects.
+  Example: WATER=0.001 (low), BIOMASS=0.3 (high)
+  
+- material_id (0-13): Unique identifier for ground truth segmentation.
+  Used to generate labeled training data for semantic segmentation.
+
+ACOUSTIC BEHAVIOR:
+-----------------
+When a sonar beam hits a material:
+1. Some energy reflects back (controlled by density * reflectivity)
+2. Some energy is absorbed (controlled by absorption)
+3. Remaining energy continues through (reduced by both effects)
+
+This creates realistic effects:
+- Strong reflectors (metal, concrete) create bright returns
+- Volumetric materials (biomass, foliage) scatter throughout their volume
+- Dense objects cast acoustic shadows on objects behind them
+
+USAGE IN SCENES:
+---------------
+Scene files should import materials and use them in VoxelGrid methods:
+
+    from materials import FISH, NET, ROPE
+    
+    grid.set_circle(position, radius, FISH)      # Add a fish
+    grid.set_box(min_pos, max_pos, CONCRETE)     # Add a building
+    grid.set_ellipse(pos, radii, angle, DEBRIS)  # Add debris
+
+MATERIAL IDS FOR SEGMENTATION:
+-----------------------------
+The ground truth output uses material IDs for pixel-wise labeling:
+- 0: EMPTY (water/air)
+- 1: NET (fishing nets)
+- 2: ROPE (support ropes)
+- 3: FISH (fish bodies)
+- 4: WALL (solid barriers)
+- 5: BIOMASS (organic accumulation)
+- 6-8: DEBRIS (light/medium/heavy)
+- 9: CONCRETE (buildings)
+- 10: WOOD (structures)
+- 11: FOLIAGE (vegetation)
+- 12: METAL (vehicles, equipment)
+- 13: GLASS (windows)
+
+ADDING NEW MATERIALS:
+--------------------
+To add a new material:
+1. Define a new MATERIAL_ID constant
+2. Add material properties to MATERIAL_CONFIG in config.py
+3. Create material instance: NEW_MAT = Material(**MATERIAL_CONFIG['new_material'])
+4. Add color mapping in VISUALIZATION_CONFIG['material_colors']
+"""
 from dataclasses import dataclass
 from config import MATERIAL_CONFIG
 

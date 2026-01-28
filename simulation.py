@@ -1,11 +1,43 @@
 """
 Interactive voxel-based sonar simulator with realistic acoustic effects.
 
-This simulator uses volumetric ray marching through a voxel grid to model sonar
-returns. Each voxel stores material properties (density, reflectivity, absorption),
-and the sonar accumulates returns as rays march through the volume.
+OVERVIEW:
+---------
+This is the main entry point for the simulation. It orchestrates all modules
+to create an interactive sonar visualization with realistic acoustic effects.
 
-Features:
+ARCHITECTURE:
+------------
+The simulation is modular with clear separation of concerns:
+
+- materials.py: Material definitions and acoustic properties
+- voxel_grid.py: 2D spatial grid storing material properties  
+- sonar.py: Volumetric ray marching sonar simulation
+- dynamics.py: Dynamic object behavior (fish, cars, debris)
+- visualization.py: Display and user interaction
+- scenes/*.py: Scene definitions (geometry + behavior)
+- config.py: All tunable parameters
+
+This file (simulation.py) is the thin orchestration layer that:
+1. Loads the requested scene module
+2. Initializes the sonar
+3. Sets up visualization
+4. Connects keyboard controls
+5. Starts the animation loop
+
+USAGE:
+------
+Run with default scene (fish cage):
+    python simulation.py
+
+Run with specific scene:
+    python simulation.py --scene scenes.street_scene
+
+Run with custom scene:
+    python simulation.py --scene scenes.my_custom_scene
+
+FEATURES:
+---------
 - Voxel-based scene representation with material properties
 - Volumetric ray marching (no surface raycasting)
 - Multiple acoustic noise effects for realistic sonar appearance:
@@ -15,9 +47,127 @@ Features:
   * Temporal decorrelation (frame-to-frame variability)
   * Aspect angle variation (micro-scale roughness)
   * Beam pattern effects (Gaussian falloff)
-- 2D top-down visualization showing net cage, fish, and sonar platform
+- Three-panel visualization: sonar view, world map, ground truth
 - Interactive controls (WASD movement, arrow rotation)
 - Real-time flickering to simulate temporal decorrelation
+- Modular scene system for easy extension
+
+HOW TO CREATE A NEW SCENE:
+--------------------------
+See detailed guide below in the docstring, or refer to:
+- scenes/fish_cage_scene.py for underwater example
+- scenes/street_scene.py for urban example
+- scenes/README.md for step-by-step instructions
+
+A scene file must provide three functions:
+1. create_scene() - Initialize world and return config dict
+2. update_scene() - Update dynamic objects each frame
+3. render_map() - Draw world map view
+
+SCENE CREATION METHODOLOGY:
+---------------------------
+
+STEP 1: Create scenes/my_scene.py
+    
+    import numpy as np
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    
+    from voxel_grid import VoxelGrid
+    from materials import FISH, WALL, CONCRETE  # etc.
+    from dynamics import update_fish  # or custom
+    from config import MY_SCENE_CONFIG  # optional
+
+STEP 2: Implement create_scene()
+
+    def create_scene():
+        # Choose world size and resolution
+        world_size = 50.0  # meters
+        grid_size = 500    # voxels (50m / 0.1m)
+        grid = VoxelGrid(grid_size, grid_size, voxel_size=0.1)
+        
+        # Add static geometry (buildings, terrain)
+        grid.set_box([0, 20], [50, 22], CONCRETE)
+        
+        # Initialize dynamic objects
+        fish_data = [...]  # List of dicts with pos, vel, etc.
+        
+        # Draw initial positions
+        for fish in fish_data:
+            grid.set_ellipse(fish['pos'], fish['radii'], ...)
+        
+        # Set sonar start
+        sonar_start_pos = np.array([25.0, 45.0])
+        sonar_start_dir = np.array([0.0, -1.0])  # normalized
+        
+        return {
+            'grid': grid,
+            'world_size': world_size,
+            'scene_type': 'my_scene',
+            'sonar_start_pos': sonar_start_pos,
+            'sonar_start_dir': sonar_start_dir,
+            'sonar_range': 20.0,
+            'dynamic_objects': {'fish_data': fish_data, ...}
+        }
+
+STEP 3: Implement update_scene()
+
+    def update_scene(grid, dynamic_objects, sonar_pos):
+        fish_data = dynamic_objects['fish_data']
+        update_fish(grid, fish_data, ...)  # Or custom logic
+
+STEP 4: Implement render_map()
+
+    def render_map(ax, dynamic_objects, sonar):
+        # Draw static structures
+        ax.add_patch(plt.Rectangle(...))
+        # Draw dynamic objects
+        ax.scatter(positions[:, 0], positions[:, 1], ...)
+
+STEP 5: Run your scene
+
+    python simulation.py --scene scenes.my_scene
+
+SCENE DESIGN TIPS:
+-----------------
+Material Selection:
+- High reflectivity (0.7-0.9): Metal, concrete (strong returns)
+- Medium reflectivity (0.3-0.6): Wood, biomass (moderate returns)
+- Low reflectivity (0.1-0.3): Nets, foliage (weak returns)
+- High density: Volumetric scattering (biomass, foliage)
+- Low density: Surface returns (nets, walls)
+
+Spatial Layout:
+- World size: 2-3x sonar range (room to explore)
+- Voxel size: 0.1m typical (balance resolution/performance)
+- Objects: >0.3m wide to be visible (>3 voxels)
+- Sonar: Start with clear view of interesting features
+
+Dynamic Behavior:
+- Use existing update functions (update_fish, update_cars, update_debris)
+- Or implement custom: grid.clear_*() then update physics then grid.set_*()
+- Velocities: 0.05-0.2 m/s typical for natural motion
+
+TECHNICAL DETAILS:
+-----------------
+Coordinate Systems:
+- World: Origin at (0,0), meters, continuous
+- Voxel: Grid indices, discrete, converted by grid.world_to_voxel()
+- Sonar: Polar (range, beam), converted to Cartesian for display
+
+Update Loop:
+1. User presses key → keyboard handler updates sonar pose
+2. Animation timer fires → update_display() called
+3. update_display() calls scene.update_scene() → dynamic objects move
+4. update_display() calls sonar.scan() → generates images
+5. update_display() redraws all three panels
+6. Repeat at animation_interval (100ms default)
+
+Performance:
+- Typical: 10 FPS for 300×300 grid, 512×256 sonar, 50 fish
+- Bottleneck: Ray marching in sonar.scan()
+- Optimization: Reduce range_bins or num_beams in config
 
 Dependencies: numpy, matplotlib
 """
@@ -58,8 +208,8 @@ def main(scene_path='scenes.fish_cage_scene'):
     print("Initializing sonar...")
     sonar = VoxelSonar(
         position=scene_config['sonar_start_pos'],
-        direction=scene_config['sonar_start_dir'],
-        range_m=scene_config['sonar_range']
+        direction=scene_config['sonar_start_dir']
+        # range_m uses SONAR_CONFIG['range_m'] by default
     )
     
     # Setup visualization

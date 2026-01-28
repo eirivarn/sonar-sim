@@ -155,19 +155,13 @@ def create_scene():
     
     return {
         'grid': grid,
-        'sonar_start_pos': np.array([15.0, 2.0]),
-        'sonar_start_dir': np.array([0.0, 1.0]),
-        'sonar_range': 20.0,
-        'world_size': 30.0,
+        'world_size': SCENE_CONFIG['world_size_m'],
         'scene_type': 'fish_cage',
+        'sonar_start_pos': np.array([15.0, 2.0]),  # Bottom center, looking up
+        'sonar_start_dir': np.array([0.0, 1.0]),
         'dynamic_objects': {
             'fish_data': fish_data,
             'debris_data': [],
-            'cage_center': cage_center,
-            'cage_radius': cage_radius,
-            'num_sides': 12,
-            'current_strength': current_strength,
-            'current_direction': current_direction,
         }
     }
 
@@ -176,8 +170,8 @@ def update_scene(grid, scene_data, sonar_pos):
     """Update fish positions in the scene."""
     fish_data = scene_data['fish_data']
     debris_data = scene_data['debris_data']
-    cage_center = scene_data['cage_center']
-    cage_radius = scene_data['cage_radius']
+    cage_center = np.array(SCENE_CONFIG['cage_center'])
+    cage_radius = SCENE_CONFIG['cage_radius']
     
     update_fish(grid, fish_data, cage_center, cage_radius, sonar_pos)
     update_debris(grid, debris_data, cage_center, cage_radius)
@@ -187,11 +181,11 @@ def render_map(ax, scene_data, sonar):
     """Render the fish cage map view."""
     import matplotlib.pyplot as plt
     
-    cage_center = scene_data['cage_center']
-    cage_radius = scene_data['cage_radius']
-    num_sides = scene_data['num_sides']
-    current_strength = scene_data['current_strength']
-    current_direction = scene_data['current_direction']
+    cage_center = np.array(SCENE_CONFIG['cage_center'])
+    cage_radius = SCENE_CONFIG['cage_radius']
+    num_sides = SCENE_CONFIG['num_sides']
+    current_strength = SCENE_CONFIG['current_strength']
+    current_direction = np.array(SCENE_CONFIG['current_direction'])
     fish_data = scene_data['fish_data']
     
     # Draw bent cage outline

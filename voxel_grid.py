@@ -1,4 +1,90 @@
-"""Voxel grid for spatial representation of materials."""
+"""Voxel grid for spatial representation of materials.
+
+OVERVIEW:
+---------
+The VoxelGrid is a 2D grid that discretizes the world into small cells (voxels).
+Each voxel stores material properties used for sonar ray marching simulation.
+
+ARCHITECTURE:
+-------------
+The grid maintains four parallel 2D numpy arrays:
+- density[x, y]: Material density (0-1)
+- reflectivity[x, y]: Acoustic backscatter strength (0-1)  
+- absorption[x, y]: Energy loss coefficient (0-1)
+- material_id[x, y]: Ground truth label for segmentation (uint8)
+
+RESOLUTION & COORDINATES:
+------------------------
+voxel_size determines spatial resolution (typically 0.1m = 10cm):
+- World coordinates: meters (continuous, float)
+- Voxel coordinates: grid indices (discrete, int)
+- Conversion: voxel_index = int(world_position / voxel_size)
+
+Example: 300x300 grid with voxel_size=0.1 represents a 30m x 30m world
+
+SHAPE PRIMITIVES:
+----------------
+The grid provides methods to fill regions with materials:
+
+1. set_circle(center, radius, material)
+   - Fills circular region
+   - Used for: fish, debris, simple objects
+   
+2. set_ellipse(center, radii, orientation, material)
+   - Fills elliptical region with rotation
+   - Used for: elongated fish, angled objects
+   - Smart collision: won't overwrite static structures with dynamic objects
+   
+3. set_box(min_pos, max_pos, material)  
+   - Fills rectangular region
+   - Used for: buildings, walls, roads, vehicles
+   
+4. set_net_plane(x_pos, y_range, z_range, mesh_size, rope_thickness)
+   - Creates fishing net mesh pattern
+   - Sparse grid of rope with some net material
+
+DYNAMIC OBJECT UPDATES:
+----------------------
+For animated objects, use clear_*() methods before redrawing:
+- clear_fish(): Removes all fish material
+- clear_debris(): Removes all debris materials
+- clear_cars(): Removes all metal (vehicle) material
+
+This allows objects to move each frame without leaving trails.
+
+CLEARING MECHANISM:
+Identifies material by reflectivity value (not perfect, but fast):
+    mask = np.abs(self.reflectivity - FISH.reflectivity) < 0.01
+    self.density[mask] = EMPTY.density  # Clear to empty
+
+STATIC vs DYNAMIC:
+------------------
+set_ellipse() has special logic to prevent dynamic objects from overwriting
+static structures:
+- Dynamic: FISH, DEBRIS (should move)
+- Static: NET, ROPE, WALL, BIOMASS (should not be overwritten)
+
+This prevents fish from erasing the net cage as they swim.
+
+USAGE IN SCENES:
+----------------
+Scene creation:
+    grid = VoxelGrid(size_x=300, size_y=300, voxel_size=0.1)
+    grid.set_box([0, 10], [50, 12], CONCRETE)  # Road
+    grid.set_circle([15, 15], 0.4, FISH)       # Add fish
+
+Scene updates (each frame):
+    grid.clear_fish()  # Remove old positions
+    for fish in fish_data:
+        grid.set_ellipse(fish['pos'], fish['radii'], fish['angle'], FISH)
+
+RELATIONSHIP TO OTHER MODULES:
+-----------------------------
+- materials.py: Defines Material objects stored in voxels
+- sonar.py: Reads voxel properties during ray marching
+- dynamics.py: Uses clear/set methods to update object positions
+- scenes/*.py: Build and maintain grid content
+"""
 import numpy as np
 from materials import Material, EMPTY, NET, ROPE, FISH, BIOMASS, WALL, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY, METAL
 

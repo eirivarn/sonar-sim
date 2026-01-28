@@ -1,4 +1,172 @@
-"""Dynamic object update functions for simulation."""
+"""Dynamic object update functions for simulation.
+
+OVERVIEW:
+---------
+This module handles updates for moving objects in the simulation. Each frame,
+dynamic objects are cleared from the voxel grid and redrawn at their new positions.
+
+DYNAMIC OBJECT PATTERN:
+----------------------
+All update functions follow the same pattern:
+1. Clear old positions from grid (grid.clear_*())
+2. Update object physics/AI (positions, velocities)
+3. Redraw objects at new positions (grid.set_*())
+
+This pattern ensures objects don't leave trails as they move.
+
+OBJECT REPRESENTATIONS:
+----------------------
+Dynamic objects are stored as lists of dictionaries:
+
+Fish:
+    {
+        'pos': np.array([x, y]),           # World position
+        'vel': np.array([vx, vy]),         # Velocity vector
+        'radii': np.array([length, width]), # Ellipse dimensions
+        'orientation': float,               # Rotation angle (radians)
+        'species': 'A' | 'B' | 'C'         # Behavior type
+    }
+
+Debris:
+    {
+        'pos': np.array([x, y]),
+        'vel': np.array([vx, vy]),
+        'size': float,                      # Radius
+        'material': Material object         # DEBRIS_LIGHT/MEDIUM/HEAVY
+    }
+
+Cars:
+    {
+        'pos': np.array([x, y]),           # Center position
+        'vel': np.array([vx, vy]),         # Velocity (moves along lane)
+        'length': float,
+        'width': float,
+        'material': METAL                   # All cars use metal
+    }
+
+FISH BEHAVIOR (update_fish):
+---------------------------
+Fish use a flocking algorithm with species-specific behaviors:
+
+Species A (Schooling):
+- Strong same-species attraction (form tight schools)
+- Weak attraction to other species
+- Moderate avoidance of collisions
+- Flee from sonar (moderate strength)
+
+Species B (Solitary):
+- No attraction to any fish
+- Strong collision avoidance
+- Very strong fleeing from sonar
+- Prefer to be alone
+
+Species C (Mixed):
+- Moderate attraction to all fish species
+- Standard collision avoidance  
+- Strong fleeing from sonar
+- Form loose mixed groups
+
+Flocking Forces:
+1. Avoidance: Repel from nearby fish (<0.8m) using inverse square law
+2. Attraction: Pull toward species group centroid (3m range)
+3. Sonar avoidance: Flee from robot (5m detection range)
+4. Perimeter preference: Drift toward cage outer edge (target 85% of radius)
+5. Random walk: Small Gaussian noise for natural motion
+
+Physics:
+- Forces combine into steering acceleration
+- Velocity limited to [min_speed, max_speed] (0.05 - 0.2 m/s)
+- Orientation follows velocity vector
+- Collisions with cage boundary reflect fish back inside
+
+Boundary Handling:
+- Fish stay within deformed cage (includes current deflection)
+- Calculates actual boundary position including current effects
+- Reflects velocity when hitting net
+
+DEBRIS BEHAVIOR (update_debris):
+--------------------------------
+Simpler physics for floating debris:
+
+Forces:
+- Random turbulence: Small Brownian motion (0.008 m/s²)
+- Drift: Carried by current/turbulence
+
+Physics:
+- Velocity limited to max_speed (0.05 m/s)
+- Bounces off cage boundaries with reflection
+- No attraction/avoidance
+
+Boundary Handling:
+- Reflects velocity when hitting cage edge
+- Pushed slightly inside to prevent escape
+
+CAR BEHAVIOR (update_cars):
+--------------------------
+Simple linear motion for vehicles:
+
+Physics:
+- Constant velocity (set during scene creation)
+- No steering or collision avoidance
+- Each car stays in its lane
+
+Boundary Handling:
+- Wraps around world edges (toroidal topology)
+- Cars appear on opposite side when exiting
+
+COORDINATE SPACES:
+-----------------
+All positions and velocities use world coordinates (meters):
+- Origin at world (0, 0)
+- Positive X: right
+- Positive Y: down (for fish cage) or along street
+
+The voxel_grid handles conversion to grid indices internally.
+
+PERFORMANCE:
+-----------
+Fish flocking is O(N²) for N fish, but optimized:
+- Only checks fish within 3m range
+- Early exit when distance too large
+- Uses squared distances (avoids sqrt)
+
+Typically <1ms for 50-100 fish on modern hardware.
+
+USAGE IN SCENES:
+----------------
+Scenes call update functions in their update_scene() method:
+
+    def update_scene(grid, scene_data, sonar_pos):
+        fish_data = scene_data['fish_data']
+        cage_center = scene_data['cage_center']
+        cage_radius = scene_data['cage_radius']
+        
+        # Update fish positions based on flocking behavior
+        update_fish(grid, fish_data, cage_center, cage_radius, sonar_pos)
+
+RELATIONSHIP TO OTHER MODULES:
+-----------------------------
+- voxel_grid.py: Uses clear/set methods to update grid
+- materials.py: Uses material definitions (FISH, DEBRIS, METAL)
+- scenes/*.py: Call update functions each frame
+- visualization.py: Triggers updates via animation loop
+
+EXTENDING:
+----------
+To add new dynamic object types:
+1. Create update_<type>() function following the pattern
+2. Add clear_<type>() method to VoxelGrid class
+3. Call from scene's update_scene() function
+4. Initialize objects in scene's create_scene() function
+
+Example:
+    def update_bubbles(grid, bubble_data):
+        grid.clear_bubbles()  # Remove old positions
+        for bubble in bubble_data:
+            bubble['pos'] += bubble['vel']  # Rise upward
+            bubble['vel'][1] -= 0.01  # Buoyancy
+            grid.set_circle(bubble['pos'], bubble['size'], BUBBLE)
+"""
 import numpy as np
 from voxel_grid import VoxelGrid
 from materials import FISH, EMPTY

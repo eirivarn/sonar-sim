@@ -92,6 +92,7 @@ SCENE_CONFIG = {
     'cage_center': [15.0, 15.0],  # Center of cage
     'cage_radius': 12.0,       # Cage radius in meters
     'num_sides': 24,           # Number of cage panel segments
+    'current_direction': [0.0, 1.0],  # Southward
     'current_strength': 2.0,   # Current deflection strength
     'net_sag': 0.25,          # Maximum net sag in meters
     

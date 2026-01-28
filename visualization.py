@@ -1,4 +1,186 @@
-"""Visualization and interactive display for sonar simulation."""
+"""Visualization and interactive display for sonar simulation.
+
+OVERVIEW:
+---------
+This module handles all display and user interaction for the simulation.
+It creates a three-panel view and manages real-time updates and controls.
+
+THREE-PANEL LAYOUT:
+------------------
+The display shows three synchronized views:
+
+1. LEFT PANEL - Sonar View (Polar):
+   - Raw sonar image in polar coordinates (range × beams)
+   - Converted to dB scale for display: 10*log10(intensity)
+   - Normalized to [0, 1] for colormap
+   - Colormap: 'viridis' (dark = weak, bright = strong returns)
+   - Shows what the sonar "sees" with all noise effects
+   - Updates continuously with temporal decorrelation (flicker)
+
+2. MIDDLE PANEL - World Map (Cartesian):
+   - Top-down bird's eye view of the scene
+   - Shows ground truth positions of objects
+   - Scene-specific rendering (cage, streets, objects)
+   - Sonar position marked with red triangle
+   - Sonar direction shown as red arrow
+   - FOV cone drawn as dashed lines
+   - Y-axis flipped (sonar at bottom looking up)
+
+3. RIGHT PANEL - Ground Truth Segmentation:
+   - Material ID map in polar coordinates (range × beams)
+   - Each material has unique color from config
+   - Perfect labels (no noise) for training ML models
+   - Legend shows material types present in scene
+   - Same dimensions as sonar view for direct comparison
+
+DISPLAY PIPELINE:
+----------------
+Each frame:
+1. Scene updates dynamic objects (fish, cars, debris)
+2. Sonar performs scan → returns (sonar_image, ground_truth)
+3. Sonar image converted to dB and normalized
+4. All three panels cleared and redrawn
+5. Canvas updated
+
+Processing steps:
+    raw_image → dB scale → normalization → colormap → display
+    raw_image: float32, range [0, ∞]
+    dB: float, range [-∞, 0] typically [-60, 0]
+    normalized: float, range [0, 1]
+    colored: RGB, range [0, 255]
+
+KEYBOARD CONTROLS:
+-----------------
+Movement (WASD):
+- W: Move forward (along direction vector)
+- S: Move backward (opposite direction)
+- A: Strafe left (perpendicular to direction)
+- D: Strafe right (perpendicular to direction)
+- Speed: VISUALIZATION_CONFIG['move_speed'] (default 1.0 m/step)
+
+Rotation (Arrow Keys):
+- Left Arrow: Rotate counterclockwise
+- Right Arrow: Rotate clockwise  
+- Speed: VISUALIZATION_CONFIG['rotate_speed'] (default 15°/step)
+
+Implementation:
+    def on_key(event):
+        if event.key == 'w':
+            sonar.move(sonar.direction * move_speed)
+        elif event.key == 'left':
+            sonar.rotate(-rotate_speed)
+        update_display()  # Redraw after movement
+
+ANIMATION LOOP:
+--------------
+Continuous updates even without user input:
+- FuncAnimation calls update_display() at regular intervals
+- Interval: VISUALIZATION_CONFIG['animation_interval'] (default 100ms)
+- Creates flickering effect from temporal decorrelation
+- Simulates dynamic sonar behavior (moving water, swaying nets)
+
+Purpose:
+- Realistic sonar continuously updates (not static)
+- Training data includes temporal variability
+- Visual feedback that simulation is running
+
+GROUND TRUTH RENDERING:
+----------------------
+Converts material IDs to RGB image:
+
+    gt_rgb = np.zeros((height, width, 3), dtype=uint8)
+    for material_id, color in material_colors.items():
+        mask = ground_truth_map == material_id
+        gt_rgb[mask] = color  # RGB tuple
+
+Colors defined in VISUALIZATION_CONFIG['material_colors']:
+- 0 (EMPTY): Black [0, 0, 0]
+- 1 (NET): Blue [0, 100, 255]
+- 3 (FISH): Orange [255, 140, 0]
+- etc.
+
+MAP RENDERING:
+-------------
+Scene-specific via scene_module.render_map():
+- Each scene draws its own map representation
+- Fish cage: Circle for cage, dots for fish, patches for debris
+- Street: Rectangles for buildings, lines for roads, boxes for cars
+- Common: Sonar position, direction arrow, FOV cone
+
+This delegation allows scenes to customize visualization while
+keeping visualization.py scene-agnostic.
+
+COORDINATE SYSTEMS:
+------------------
+Sonar View (Polar):
+- X-axis: Beam index [0, num_beams-1] → angle across FOV
+- Y-axis: Range bin [0, range_bins-1] → distance from sonar
+- Origin: Bottom-left (near sonar, left edge of FOV)
+
+World Map (Cartesian):
+- X-axis: World X coordinate [0, world_size] meters
+- Y-axis: World Y coordinate [world_size, 0] meters (inverted!)
+- Origin: Bottom-left (sonar typically near bottom)
+
+Ground Truth (Polar):
+- Same as sonar view (for easy comparison)
+- Material IDs instead of intensity values
+
+MATLOTLIB CONFIGURATION:
+-----------------------
+Disables default keybindings to avoid conflicts:
+- Quit, save, fullscreen, navigation, etc. all disabled
+- Only our custom key handler is active
+- Prevents accidental interference with WASD controls
+
+DEBUG OUTPUT:
+------------
+Prints diagnostic info each frame:
+- Sonar position
+- Materials present in ground truth (with percentages)
+- Materials in voxel grid (with percentages)
+- Sonar image shape
+
+Useful for:
+- Verifying scene setup
+- Checking material coverage
+- Debugging dimension mismatches
+
+USAGE:
+------
+Called from simulation.py main loop:
+
+    # Setup
+    fig, ax_sonar, ax_map, ax_gt = setup_figure(scene_type)
+    on_key = create_keyboard_handler(...)
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    
+    # Initial display
+    update_display(...)
+    
+    # Animation
+    anim = setup_animation(...)
+    plt.show()
+
+RELATIONSHIP TO OTHER MODULES:
+-----------------------------
+- sonar.py: Calls scan() to get sonar image and ground truth
+- voxel_grid.py: Scene renders grid contents in map view  
+- scenes/*.py: Delegates to scene.update_scene() and scene.render_map()
+- config.py: VISUALIZATION_CONFIG controls all display settings
+- simulation.py: Orchestrates setup and event loop
+
+CUSTOMIZATION:
+-------------
+All visual settings in config.py:
+- figure_size: Window dimensions
+- sonar_colormap: Color scheme for sonar display
+- material_colors: RGB colors for each material
+- db_normalization: dB range for display scaling
+- animation_interval: Update frequency
+
+Change these to adjust appearance without modifying code.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
