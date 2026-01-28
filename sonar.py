@@ -1,0 +1,208 @@
+"""Volumetric sonar simulation using ray marching."""
+import numpy as np
+from config import SONAR_CONFIG
+from voxel_grid import VoxelGrid
+
+
+class VoxelSonar:
+    """Sonar using voxel ray marching."""
+    
+    def __init__(self, position: np.ndarray, direction: np.ndarray,
+                 range_m: float = None, fov_deg: float = None, num_beams: int = None):
+        """Initialize sonar.
+        
+        Args:
+            position: Sonar position in world (meters)
+            direction: Forward direction (normalized)
+            range_m: Maximum range (default from config)
+            fov_deg: Field of view in degrees (default from config)
+            num_beams: Number of beams (default from config)
+        """
+        self.position = position.copy()
+        self.direction = direction / (np.linalg.norm(direction) + 1e-9)
+        self.range_m = range_m if range_m is not None else SONAR_CONFIG['range_m']
+        self.fov_deg = fov_deg if fov_deg is not None else SONAR_CONFIG['fov_deg']
+        self.num_beams = num_beams if num_beams is not None else SONAR_CONFIG['num_beams']
+        self.range_bins = SONAR_CONFIG['range_bins']
+    
+    def scan(self, grid: VoxelGrid, return_ground_truth: bool = True):
+        """Scan scene using volumetric ray marching.
+        
+        Args:
+            return_ground_truth: If True, also return ground truth material ID map
+        
+        Returns:
+            If return_ground_truth is False:
+                (range_bins, num_beams) array of accumulated returns
+            If return_ground_truth is True:
+                Tuple of (sonar_image, ground_truth_map) both (range_bins, num_beams)
+        """
+        image = np.zeros((self.range_bins, self.num_beams), dtype=np.float32)
+        ground_truth = np.zeros((self.range_bins, self.num_beams), dtype=np.uint8) if return_ground_truth else None
+        
+        # Pre-compute ground truth by sampling world at each (range, angle)
+        if return_ground_truth:
+            fov_rad = np.deg2rad(self.fov_deg)
+            for beam_idx in range(self.num_beams):
+                # Beam direction
+                t = beam_idx / (self.num_beams - 1) if self.num_beams > 1 else 0.5
+                angle = (-fov_rad / 2) + t * fov_rad
+                
+                # Rotate direction by angle
+                dir_angle = np.arctan2(self.direction[1], self.direction[0])
+                beam_angle = dir_angle + angle
+                beam_dir = np.array([np.cos(beam_angle), np.sin(beam_angle)])
+                
+                # Sample material at each range along this beam
+                for range_idx in range(self.range_bins):
+                    distance = (range_idx / self.range_bins) * self.range_m
+                    world_pos = self.position + beam_dir * distance
+                    
+                    # Get material at this world position
+                    vx, vy = grid.world_to_voxel(world_pos)
+                    if grid.is_inside(vx, vy):
+                        ground_truth[range_idx, beam_idx] = grid.material_id[vx, vy]
+        
+        fov_rad = np.deg2rad(self.fov_deg)
+        
+        for beam_idx in range(self.num_beams):
+            # Beam direction
+            t = beam_idx / (self.num_beams - 1) if self.num_beams > 1 else 0.5
+            angle = (-fov_rad / 2) + t * fov_rad
+            
+            # BEAM PATTERN: Gaussian falloff toward edges
+            beam_pattern = np.exp(-((angle / (fov_rad/2))**2) * SONAR_CONFIG['beam_pattern_falloff'])
+            
+            # Rotate direction by angle
+            dir_angle = np.arctan2(self.direction[1], self.direction[0])
+            beam_angle = dir_angle + angle
+            beam_dir = np.array([np.cos(beam_angle), np.sin(beam_angle)])
+            
+            # Ray march through volume (for sonar image only)
+            self._march_ray(grid, self.position, beam_dir, image[:, beam_idx], beam_pattern)
+        
+        # TEMPORAL DECORRELATION: Additional frame-to-frame variability on objects only
+        signal_mask = image > 1e-8
+        decorr_shape = SONAR_CONFIG['temporal_decorrelation_shape']
+        decorrelation_noise = np.random.gamma(shape=decorr_shape, scale=1.0/decorr_shape, size=image.shape)
+        image[signal_mask] *= decorrelation_noise[signal_mask]
+        
+        if return_ground_truth:
+            return image, ground_truth
+        else:
+            return image
+    
+    def _march_ray(self, grid: VoxelGrid, origin: np.ndarray, direction: np.ndarray,
+                   output_bins: np.ndarray, beam_strength: float = 1.0):
+        """March ray through voxel grid, accumulating returns.
+        
+        Args:
+            beam_strength: Beam pattern multiplier (1.0 at center, lower at edges)
+        """
+        # DDA-style voxel traversal
+        step_size = grid.voxel_size * SONAR_CONFIG['step_size_factor']
+        num_steps = int(self.range_m / step_size)
+        
+        current_pos = origin.copy()
+        energy = 1.0  # Energy budget
+        energy_threshold = SONAR_CONFIG['energy_threshold']
+        
+        for step in range(num_steps):
+            distance = step * step_size
+            if distance >= self.range_m or energy < energy_threshold:
+                break
+            
+            # Get voxel properties at current position
+            x, y = grid.world_to_voxel(current_pos)
+            
+            if not grid.is_inside(x, y):
+                current_pos += direction * step_size
+                continue
+            
+            density = grid.density[x, y]
+            reflectivity = grid.reflectivity[x, y]
+            absorption = grid.absorption[x, y]
+            
+            # VOLUME SCATTERING: Deposit return proportional to density and reflectivity
+            if density > 0.01:
+                # ACOUSTIC SPECKLE: Multiplicative noise from coherent interference
+                speckle_shape = SONAR_CONFIG['speckle_shape']
+                speckle = np.random.gamma(shape=speckle_shape, scale=1.0/speckle_shape)
+                
+                # ASPECT ANGLE VARIATION: Return strength varies with small angle changes
+                aspect_std = SONAR_CONFIG['aspect_variation_std']
+                aspect_range = SONAR_CONFIG['aspect_variation_range']
+                aspect_variation = 0.5 + aspect_std * np.random.randn()
+                aspect_variation = np.clip(aspect_variation, aspect_range[0], aspect_range[1])
+                
+                # GEOMETRIC SHADOWING: Objects in front block energy to objects behind
+                scatter = energy * density * reflectivity * step_size * speckle * aspect_variation
+                
+                # Two-way propagation loss
+                spreading_loss = 1.0 / (distance**2 + SONAR_CONFIG['spreading_loss_min'])
+                water_abs = SONAR_CONFIG['water_absorption']
+                water_absorption = np.exp(-0.05 * distance * 2 * water_abs)  # Two-way
+                
+                return_energy = scatter * spreading_loss * water_absorption
+                
+                # SPATIAL JITTER: Echo position uncertainty for freckled appearance
+                bin_idx = int((distance / self.range_m) * (len(output_bins) - 1))
+                
+                jitter_prob = SONAR_CONFIG['jitter_probability']
+                if np.random.rand() < jitter_prob:
+                    # Random Gaussian jitter with range-dependent degradation
+                    range_factor = 1.0 + (distance / self.range_m) * SONAR_CONFIG['jitter_range_factor']
+                    jitter_offset = int(np.round(np.random.randn() * SONAR_CONFIG['jitter_std_base'] * range_factor))
+                    jitter_offset = np.clip(jitter_offset, -SONAR_CONFIG['jitter_max_offset'], SONAR_CONFIG['jitter_max_offset'])
+                    bin_jitter = bin_idx + jitter_offset
+                    bin_jitter = np.clip(bin_jitter, 0, len(output_bins) - 1)
+                else:
+                    bin_jitter = bin_idx
+                
+                # MULTI-BIN SPREADING: Sometimes deposit return across multiple adjacent bins
+                spread_prob = SONAR_CONFIG['spread_probability']
+                if np.random.rand() < spread_prob:
+                    # Spread across multiple bins
+                    num_spread_bins = np.random.choice(
+                        SONAR_CONFIG['spread_bin_options'], 
+                        p=SONAR_CONFIG['spread_bin_probs']
+                    )
+                    spread_center = bin_jitter
+                    
+                    for offset in range(-(num_spread_bins//2), (num_spread_bins//2) + 1):
+                        spread_bin = spread_center + offset
+                        if 0 <= spread_bin < len(output_bins):
+                            # Energy falls off from center of spread (Gaussian-ish)
+                            spread_weight = np.exp(-0.5 * (offset / (num_spread_bins/3))**2)
+                            range_quality = 1.0 / (1.0 + (distance / self.range_m) * 0.8)
+                            output_bins[spread_bin] += return_energy * beam_strength * range_quality * spread_weight / num_spread_bins
+                else:
+                    # Single bin deposit
+                    if 0 <= bin_jitter < len(output_bins):
+                        range_quality = 1.0 / (1.0 + (distance / self.range_m) * 0.8)
+                        output_bins[bin_jitter] += return_energy * beam_strength * range_quality
+            
+            # ABSORPTION: Reduce forward energy (creates shadows)
+            if density > 0.01:
+                # Both absorption and scattering reduce forward energy
+                energy *= np.exp(-absorption * step_size * SONAR_CONFIG['absorption_factor'])
+                energy *= (1.0 - density * reflectivity * step_size * SONAR_CONFIG['scattering_loss_factor'])
+                energy = max(0.0, energy)
+            
+            # Move forward
+            current_pos += direction * step_size
+    
+    def move(self, delta: np.ndarray):
+        """Move sonar position."""
+        self.position += delta
+    
+    def rotate(self, angle_deg: float):
+        """Rotate sonar."""
+        angle_rad = np.deg2rad(angle_deg)
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+        
+        self.direction = np.array([
+            self.direction[0] * cos_a - self.direction[1] * sin_a,
+            self.direction[0] * sin_a + self.direction[1] * cos_a
+        ])
