@@ -166,18 +166,23 @@ Update Loop:
 
 """
 
+import numpy as np
 import matplotlib.pyplot as plt
 from sonar import VoxelSonar
 from visualization import (setup_figure, update_display, create_keyboard_handler, 
                            setup_animation, print_controls)
 
 
-def main(scene_path='scenes.fish_cage_scene', save_run=None):
-    """Run interactive voxel sonar viewer.
+def main(scene_path='scenes.fish_cage_scene', save_run=None, collect_mode=None, num_samples=100, path_kwargs=None):
+    """Run interactive voxel sonar viewer or headless data collection.
     
     Args:
         scene_path: Module path to scene file (e.g., 'scenes.fish_cage_scene')
         save_run: Optional run name for saving data. If True, uses timestamp.
+        collect_mode: If provided, run headless data collection with this path type
+                     ('circular', 'grid', 'random', 'spiral')
+        num_samples: Number of samples to collect in headless mode
+        path_kwargs: Additional arguments for path generator
     """
     # Dynamically import the scene module
     import importlib
@@ -207,7 +212,7 @@ def main(scene_path='scenes.fish_cage_scene', save_run=None):
         # range_m uses SONAR_CONFIG['range_m'] by default
     )
     
-    # Setup save directory if requested
+    # Setup save directory if requested (needed for both GUI and headless modes)
     save_dir = None
     frame_counter = None
     if save_run:
@@ -248,6 +253,90 @@ def main(scene_path='scenes.fish_cage_scene', save_run=None):
         print(f"  - metadata/      (frame metadata as .json)")
         print()
     
+    # HEADLESS DATA COLLECTION MODE
+    if collect_mode is not None:
+        if not save_run:
+            print("Error: --save is required when using --collect mode")
+            return
+        
+        from data_collection import get_path_generator
+        import json
+        
+        print(f"\n{'='*60}")
+        print(f"HEADLESS DATA COLLECTION MODE")
+        print(f"{'='*60}")
+        print(f"Path type: {collect_mode}")
+        print(f"Samples: {num_samples}")
+        print(f"Scene: {scene_type}")
+        print(f"Save directory: {save_dir}")
+        print(f"{'='*60}\n")
+        
+        # Generate path
+        if path_kwargs is None:
+            path_kwargs = {}
+        path_gen = get_path_generator(collect_mode, scene_config, num_samples=num_samples, **path_kwargs)
+        
+        # Save path configuration
+        path_config = {
+            'path_type': collect_mode,
+            'num_samples': num_samples,
+            'path_kwargs': path_kwargs,
+            'positions': [(pos.tolist(), direction.tolist()) for pos, direction in path_gen]
+        }
+        with open(save_dir / 'path_config.json', 'w') as f:
+            json.dump(path_config, f, indent=2)
+        
+        # Collect data at each position
+        frame_counter = {'count': 0}
+        for i, (pos, direction) in enumerate(path_gen):
+            # Update sonar position
+            sonar.position = pos.copy()
+            sonar.direction = direction.copy()
+            
+            # Update scene (for dynamic objects)
+            scene_module.update_scene(grid, dynamic_objects, sonar.position)
+            
+            # Perform scan
+            sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
+            
+            # Save data
+            frame_num = frame_counter['count']
+            
+            # Save sonar image
+            sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
+            np.save(sonar_path, sonar_image)
+            
+            # Save ground truth
+            gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
+            np.save(gt_path, ground_truth)
+            
+            # Save metadata
+            metadata = {
+                'frame': frame_num,
+                'sonar_position': sonar.position.tolist(),
+                'sonar_direction': sonar.direction.tolist(),
+                'range_m': sonar.range_m,
+                'fov_deg': sonar.fov_deg,
+            }
+            meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
+            with open(meta_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            frame_counter['count'] += 1
+            
+            # Progress update
+            if (i + 1) % max(1, num_samples // 10) == 0:
+                progress = 100 * (i + 1) / num_samples
+                print(f"Progress: {i+1}/{num_samples} ({progress:.1f}%) - Position: {pos}")
+        
+        print(f"\n{'='*60}")
+        print(f"Data collection complete!")
+        print(f"Collected {frame_counter['count']} frames")
+        print(f"Saved to: {save_dir}")
+        print(f"{'='*60}\n")
+        return
+    
+    # INTERACTIVE GUI MODE (original behavior)
     # Setup visualization
     fig, ax_sonar, ax_map, ax_gt = setup_figure(scene_type)
     
@@ -278,6 +367,25 @@ if __name__ == '__main__':
                        help='Scene module path (e.g., scenes.fish_cage_scene or scenes.street_scene)')
     parser.add_argument('--save', type=str, nargs='?', const=True, default=None,
                        help='Save run data. Optionally provide run name, otherwise uses timestamp.')
+    parser.add_argument('--collect', type=str, choices=['circular', 'grid', 'random', 'spiral'], default=None,
+                       help='Run headless data collection with specified path type (requires --save)')
+    parser.add_argument('--num-samples', type=int, default=100,
+                       help='Number of samples to collect in headless mode (default: 100)')
+    parser.add_argument('--radius-variation', type=float, default=1.0,
+                       help='Radius variation for circular path (default: 1.0)')
+    parser.add_argument('--orientation-mode', type=str, choices=['inward', 'tangent', 'outward', 'mixed'], 
+                       default='inward', help='Orientation mode for circular path (default: inward)')
+    parser.add_argument('--orientation-noise', type=float, default=15.0,
+                       help='Orientation noise in degrees for circular path (default: 15.0)')
     
     args = parser.parse_args()
-    main(scene_path=args.scene, save_run=args.save)
+    
+    # Build path_kwargs from arguments
+    path_kwargs = {
+        'radius_variation': args.radius_variation,
+        'orientation_mode': args.orientation_mode,
+        'orientation_noise_deg': args.orientation_noise,
+    }
+    
+    main(scene_path=args.scene, save_run=args.save, collect_mode=args.collect, 
+         num_samples=args.num_samples, path_kwargs=path_kwargs)
