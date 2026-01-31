@@ -67,7 +67,7 @@ To add a new material:
 4. Add color mapping in VISUALIZATION_CONFIG['material_colors']
 """
 from dataclasses import dataclass
-from config import MATERIAL_CONFIG
+from src.config import MATERIAL_CONFIG
 
 
 @dataclass

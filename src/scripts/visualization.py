@@ -185,8 +185,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Patch
-from config import VISUALIZATION_CONFIG
-from materials import (MATERIAL_ID_EMPTY, MATERIAL_ID_NET, MATERIAL_ID_ROPE, 
+from src.config import VISUALIZATION_CONFIG
+from src.core.materials import (MATERIAL_ID_EMPTY, MATERIAL_ID_NET, MATERIAL_ID_ROPE, 
                        MATERIAL_ID_FISH, MATERIAL_ID_DEBRIS_LIGHT)
 
 

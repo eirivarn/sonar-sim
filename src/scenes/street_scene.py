@@ -4,11 +4,11 @@ import sys
 from pathlib import Path
 
 # Import from parent directory
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from voxel_grid import VoxelGrid
-from materials import CONCRETE, WOOD, FOLIAGE, METAL, GLASS
-from dynamics import update_cars
-from config import STREET_SCENE_CONFIG
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from src.core.voxel_grid import VoxelGrid
+from src.core.materials import CONCRETE, METAL, FOLIAGE, WOOD, GLASS
+from src.core.dynamics import update_cars
+from src.config import STREET_SCENE_CONFIG
 
 
 def create_scene():

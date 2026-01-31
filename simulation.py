@@ -10,13 +10,13 @@ ARCHITECTURE:
 ------------
 The simulation is modular with clear separation of concerns:
 
-- materials.py: Material definitions and acoustic properties
-- voxel_grid.py: 2D spatial grid storing material properties  
-- sonar.py: Volumetric ray marching sonar simulation
-- dynamics.py: Dynamic object behavior (fish, cars, debris)
-- visualization.py: Display and user interaction
-- scenes/*.py: Scene definitions (geometry + behavior)
-- config.py: All tunable parameters
+- src/core/materials.py: Material definitions and acoustic properties
+- src/core/voxel_grid.py: 2D spatial grid storing material properties  
+- src/core/sonar.py: Volumetric ray marching sonar simulation
+- src/core/dynamics.py: Dynamic object behavior (fish, cars, debris)
+- src/visualization/visualization.py: Display and user interaction
+- src/scenes/*.py: Scene definitions (geometry + behavior)
+- src/config.py: All tunable parameters
 
 This file (simulation.py) is the thin orchestration layer that:
 1. Loads the requested scene module
@@ -76,8 +76,8 @@ STEP 1: Create scenes/my_scene.py
     
     from voxel_grid import VoxelGrid
     from materials import FISH, WALL, CONCRETE  # etc.
-    from dynamics import update_fish  # or custom
-    from config import MY_SCENE_CONFIG  # optional
+    from src.core.dynamics import update_fish  # or custom
+    from src.config import MY_SCENE_CONFIG  # optional
 
 STEP 2: Implement create_scene()
 
@@ -168,12 +168,12 @@ Update Loop:
 
 import numpy as np
 import matplotlib.pyplot as plt
-from sonar import VoxelSonar
-from visualization import (setup_figure, update_display, create_keyboard_handler, 
+from src.core.sonar import VoxelSonar
+from src.scripts.visualization import (setup_figure, update_display, create_keyboard_handler, 
                            setup_animation, print_controls)
 
 
-def main(scene_path='scenes.fish_cage_scene', save_run=None, collect_mode=None, num_samples=100, path_kwargs=None):
+def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=None, num_samples=100, path_kwargs=None):
     """Run interactive voxel sonar viewer or headless data collection.
     
     Args:
@@ -233,7 +233,7 @@ def main(scene_path='scenes.fish_cage_scene', save_run=None, collect_mode=None, 
         (save_dir / 'metadata').mkdir(parents=True, exist_ok=True)
         
         # Save run configuration
-        from config import SONAR_CONFIG, VISUALIZATION_CONFIG
+        from src.config import SONAR_CONFIG, VISUALIZATION_CONFIG
         run_config = {
             'run_name': run_name,
             'scene_path': scene_path,
@@ -289,7 +289,7 @@ def main(scene_path='scenes.fish_cage_scene', save_run=None, collect_mode=None, 
             print("Error: --save is required when using --collect mode")
             return
         
-        from data_collection import get_path_generator
+        from src.scripts.data_collection import get_path_generator
         import json
         
         print(f"\n{'='*60}")
@@ -393,8 +393,8 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser(description='Run sonar simulation with different scenes')
-    parser.add_argument('--scene', type=str, default='scenes.fish_cage_scene',
-                       help='Scene module path (e.g., scenes.fish_cage_scene or scenes.street_scene)')
+    parser.add_argument('--scene', type=str, default='src.scenes.fish_cage_scene',
+                       help='Scene module path (e.g., src.scenes.fish_cage_scene or src.scenes.street_scene)')
     parser.add_argument('--save', type=str, nargs='?', const=True, default=None,
                        help='Save run data. Optionally provide run name, otherwise uses timestamp.')
     parser.add_argument('--collect', type=str, choices=['circular', 'grid', 'random', 'spiral'], default=None,

@@ -165,7 +165,7 @@ def create_visualization(frame_data, run_config, material_colors=None):
             import sys
             from pathlib import Path as P
             sys.path.insert(0, str(P(__file__).parent))
-            from config import SCENE_CONFIG
+            from src.config import SCENE_CONFIG
             
             # Draw cage outline (12-sided polygon)
             cage_center = np.array(SCENE_CONFIG['cage_center'])
@@ -199,7 +199,7 @@ def create_visualization(frame_data, run_config, material_colors=None):
             import sys
             from pathlib import Path as P
             sys.path.insert(0, str(P(__file__).parent))
-            from config import STREET_SCENE_CONFIG
+            from src.config import STREET_SCENE_CONFIG
             
             # Draw street
             street_width = STREET_SCENE_CONFIG['street_width']
@@ -357,7 +357,7 @@ def create_video(run_data, output_path, fps=10, dpi=100):
                 import sys
                 from pathlib import Path as P
                 sys.path.insert(0, str(P(__file__).parent))
-                from config import SCENE_CONFIG
+                from src.config import SCENE_CONFIG
                 
                 cage_center = np.array(SCENE_CONFIG['cage_center'])
                 cage_radius = SCENE_CONFIG['cage_radius']

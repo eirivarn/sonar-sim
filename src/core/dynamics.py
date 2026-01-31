@@ -168,8 +168,8 @@ Example:
             grid.set_circle(bubble['pos'], bubble['size'], BUBBLE)
 """
 import numpy as np
-from voxel_grid import VoxelGrid
-from materials import FISH, EMPTY
+from src.core.voxel_grid import VoxelGrid
+from src.core.materials import FISH, EMPTY
 
 
 def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_radius: float, sonar_pos: np.ndarray):

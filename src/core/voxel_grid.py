@@ -86,7 +86,7 @@ RELATIONSHIP TO OTHER MODULES:
 - scenes/*.py: Build and maintain grid content
 """
 import numpy as np
-from materials import Material, EMPTY, NET, ROPE, FISH, BIOMASS, WALL, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY, METAL
+from src.core.materials import Material, EMPTY, NET, ROPE, FISH, BIOMASS, WALL, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY, METAL
 
 
 class VoxelGrid:

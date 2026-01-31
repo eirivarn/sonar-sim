@@ -134,8 +134,8 @@ Adjust these to change sonar characteristics:
 - Adjust beam_pattern_falloff for sharper/softer FOV edges
 """
 import numpy as np
-from config import SONAR_CONFIG
-from voxel_grid import VoxelGrid
+from src.config import SONAR_CONFIG
+from src.core.voxel_grid import VoxelGrid
 
 
 class VoxelSonar:

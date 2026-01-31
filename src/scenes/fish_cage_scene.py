@@ -4,11 +4,11 @@ import sys
 from pathlib import Path
 
 # Import from parent directory
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from voxel_grid import VoxelGrid
-from materials import FISH, NET, ROPE, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY
-from dynamics import update_fish, update_debris
-from config import SCENE_CONFIG
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from src.core.voxel_grid import VoxelGrid
+from src.core.materials import FISH, NET, ROPE, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY
+from src.core.dynamics import update_fish, update_debris
+from src.config import SCENE_CONFIG
 
 
 def create_scene():
