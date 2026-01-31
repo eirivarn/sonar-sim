@@ -172,8 +172,17 @@ from src.core.voxel_grid import VoxelGrid
 from src.core.materials import FISH, EMPTY
 
 
-def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_radius: float, sonar_pos: np.ndarray):
-    """Update fish positions and redraw them in the grid."""
+def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_radius: float, sonar_pos: np.ndarray, dt: float = 0.1):
+    """Update fish positions and redraw them in the grid.
+    
+    Args:
+        grid: VoxelGrid to update
+        fish_data: List of fish dictionaries
+        cage_center: Center of cage
+        cage_radius: Radius of cage
+        sonar_pos: Sonar position for avoidance behavior
+        dt: Time step in seconds (default: 0.1 for 10 FPS)
+    """
     # Clear existing fish
     grid.clear_fish()
     
@@ -189,8 +198,8 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
     
     # Update each fish
     for i, fish in enumerate(fish_data):
-        # Update position
-        fish['pos'] += fish['vel']
+        # Update position (apply dt to velocity)
+        fish['pos'] += fish['vel'] * dt
         
         # Flocking behavior (computed every frame for responsiveness)
         species = fish['species']
@@ -256,17 +265,17 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
                 # Gentle attraction to outer area (0.4 strength)
                 steer += to_perimeter * 0.4
         
-        # Add small random component
-        steer += (np.random.rand(2) - 0.5) * 0.3
+        # Add small random component (scaled by dt for frame-rate independence)
+        steer += (np.random.rand(2) - 0.5) * 0.1 * (dt * 10)  # Reduced and time-scaled
         
-        # Apply steering with momentum
+        # Apply steering with momentum (scaled by dt)
         if np.linalg.norm(steer) > 0.01:
-            fish['vel'] += steer * 0.03
+            fish['vel'] += steer * 0.02 * (dt * 10)  # Reduced and time-scaled
             
-            # Limit speed
+            # Limit speed (reduced for smoother, more realistic movement)
             speed = np.linalg.norm(fish['vel'])
-            max_speed = 0.2
-            min_speed = 0.05
+            max_speed = 0.15  # Reduced from 0.2 for gentler movement
+            min_speed = 0.03  # Reduced from 0.05 for slower cruising
             if speed > max_speed:
                 fish['vel'] = fish['vel'] / speed * max_speed
             elif speed < min_speed:
@@ -310,8 +319,12 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
         grid.set_ellipse(fish['pos'], fish['radii'], fish['orientation'], FISH)
 
 
-def update_debris(grid: VoxelGrid, debris_data: list, cage_center: np.ndarray, cage_radius: float):
-    """Update debris positions and redraw them in the grid."""
+def update_debris(grid: VoxelGrid, debris_data: list, cage_center: np.ndarray, cage_radius: float, dt: float = 0.1):
+    """Update debris positions and redraw them in the grid.
+    
+    Args:
+        dt: Time step in seconds (default: 0.1 for 10 FPS)
+    """
     # Clear existing debris
     grid.clear_debris()
     
@@ -327,8 +340,8 @@ def update_debris(grid: VoxelGrid, debris_data: list, cage_center: np.ndarray, c
         if speed > max_speed:
             debris['vel'] = debris['vel'] / speed * max_speed
         
-        # Update position
-        debris['pos'] += debris['vel']
+        # Update position with time step
+        debris['pos'] += debris['vel'] * dt
         
         # Keep debris inside cage bounds (bounce off walls)
         dx = debris['pos'][0] - cage_center[0]
@@ -346,15 +359,19 @@ def update_debris(grid: VoxelGrid, debris_data: list, cage_center: np.ndarray, c
         grid.set_circle(debris['pos'], debris['size'], debris['material'])
 
 
-def update_cars(grid: VoxelGrid, car_data: list, world_size: float):
-    """Update car positions and redraw them in the grid."""
+def update_cars(grid: VoxelGrid, car_data: list, dt: float = 0.1):
+    """Update car positions and redraw them in the grid.
+    
+    Args:
+        dt: Time step in seconds (default: 0.1 for 10 FPS)
+    """
     # Clear existing cars
     grid.clear_cars()
     
     # Update each car
     for car in car_data:
-        # Update position
-        car['pos'] += car['vel']
+        # Update position with time step
+        car['pos'] += car['vel'] * dt
         
         # Wrap around at world boundaries (cars loop around)
         if car['pos'][0] < 0:

@@ -219,7 +219,7 @@ def setup_figure(scene_type: str):
     return fig, ax_sonar, ax_map, ax_gt
 
 
-def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None):
+def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
     """Update all display panels.
     
     Args:
@@ -233,9 +233,10 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
         world_size: Size of world for map display
         save_dir: Optional directory to save frames
         frame_counter: Optional dict with 'count' key to track frame numbers
+        dt: Time step in seconds for physics updates
     """
     # Update dynamic objects using scene's update function
-    scene_module.update_scene(grid, dynamic_objects, sonar.position)
+    scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
     
     print(f"Scanning from position {sonar.position}...")
     sonar_image_polar, ground_truth_map = sonar.scan(grid, return_ground_truth=True)
@@ -393,12 +394,13 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
             print(f"Saved frame {frame_num}")
 
 
-def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None):
+def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
     """Create keyboard event handler function.
     
     Args:
         save_dir: Optional directory to save frames
         frame_counter: Optional dict with 'count' key
+        dt: Time step in seconds for physics updates
     
     Returns:
         Function that handles keyboard events
@@ -427,23 +429,24 @@ def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar
         else:
             return
         
-        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
+        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     
     return on_key
 
 
-def setup_animation(fig, sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None):
+def setup_animation(fig, sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
     """Setup matplotlib animation for continuous updates.
     
     Args:
         save_dir: Optional directory to save frames
         frame_counter: Optional dict with 'count' key
+        dt: Time step in seconds for physics updates
     
     Returns:
         FuncAnimation object
     """
     def anim_update(frame):
-        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
+        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
         return []
     
     anim_interval = VISUALIZATION_CONFIG['animation_interval']

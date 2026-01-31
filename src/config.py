@@ -54,7 +54,10 @@ VISUALIZATION_CONFIG = {
     'subplot_layout': (1, 3),  # Subplot grid layout (rows, cols)
     
     # Animation
-    'animation_interval': 100, # Update interval in milliseconds
+    'animation_interval': 33,  # Update interval in milliseconds (33ms = ~30 FPS)
+    'dt': 0.033,               # Time step in seconds (MUST match interval: dt = interval/1000)
+                               # For smooth 30 FPS video playback
+                               # For 60 FPS (16ms): set interval=16, dt=0.016
     'animation_cache': False,  # Cache animation frames
     
     # Display normalization
@@ -80,8 +83,10 @@ VISUALIZATION_CONFIG = {
     },
     
     # Controls
-    'move_speed': 0.5,         # Movement speed in meters per key press
-    'rotate_speed': 5.0,       # Rotation speed in degrees per key press
+    'move_speed': 0.01,         # Movement speed in meters per key press (0.1m = 10cm)
+                               # For smooth 30 FPS: 0.1m feels like ~3 m/s if held
+                               # Reduce to 0.05 for even slower, more deliberate movement
+    'rotate_speed': 0.5,       # Rotation speed in degrees per key press
 }
 
 # ============================================================================
@@ -111,6 +116,29 @@ STREET_SCENE_CONFIG = {
     'num_trees': 12,           # Number of trees
     'num_cars': 4,             # Number of moving cars
     'car_speed_range': [0.1, 0.3],  # Car speed range in m/s
+}
+
+# ============================================================================
+# DATA COLLECTION PATH PARAMETERS
+# ============================================================================
+DATA_COLLECTION_CONFIG = {
+    # Circular path movement speed
+    'circular_path_duration_seconds': 200.0,  # Time to complete one full circle (at 30 FPS)
+    
+    # Circular path smooth variation (uses multiple sine waves)
+    # Distance variation: r = base_radius + sum(sin(angle * freq) * amp) * radius_variation
+    'radius_sine_waves': [
+        {'frequency': 3.0, 'amplitude': 0.4},    # Main in/out pattern
+        {'frequency': 7.0, 'amplitude': 0.3},    # High frequency detail
+        {'frequency': 1.5, 'amplitude': 0.3},    # Slow drift
+    ],
+    
+    # Orientation variation: angle_offset = sum(sin(angle * freq + phase) * amp) * orientation_noise
+    'orientation_sine_waves': [
+        {'frequency': 5.0, 'amplitude': 0.6, 'phase_offset': 0.0},      # Main sweeps
+        {'frequency': 11.0, 'amplitude': 0.5, 'phase_offset': 0.05},    # Detail (phase varies per sample)
+        {'frequency': 2.0, 'amplitude': 0.3, 'phase_offset': 0.0},      # Slow sweep
+    ],
 }
 
 # ============================================================================

@@ -166,15 +166,22 @@ def create_scene():
     }
 
 
-def update_scene(grid, scene_data, sonar_pos):
-    """Update fish positions in the scene."""
+def update_scene(grid, scene_data, sonar_pos, dt=0.1):
+    """Update fish positions in the scene.
+    
+    Args:
+        grid: VoxelGrid to update
+        scene_data: Scene data dict with fish_data and debris_data
+        sonar_pos: Sonar position for avoidance
+        dt: Time step in seconds
+    """
     fish_data = scene_data['fish_data']
     debris_data = scene_data['debris_data']
     cage_center = np.array(SCENE_CONFIG['cage_center'])
     cage_radius = SCENE_CONFIG['cage_radius']
     
-    update_fish(grid, fish_data, cage_center, cage_radius, sonar_pos)
-    update_debris(grid, debris_data, cage_center, cage_radius)
+    update_fish(grid, fish_data, cage_center, cage_radius, sonar_pos, dt)
+    update_debris(grid, debris_data, cage_center, cage_radius, dt)
 
 
 def render_map(ax, scene_data, sonar):

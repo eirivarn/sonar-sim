@@ -165,12 +165,19 @@ def create_scene():
     }
 
 
-def update_scene(grid, scene_data, sonar_pos):
-    """Update car positions in the scene."""
+def update_scene(grid, scene_data, sonar_pos, dt=0.1):
+    """Update car positions in the scene.
+    
+    Args:
+        grid: VoxelGrid to update
+        scene_data: Scene data dict with car_data
+        sonar_pos: Sonar position (unused for street scene)
+        dt: Time step in seconds
+    """
     car_data = scene_data['car_data']
     world_size = STREET_SCENE_CONFIG['world_size_m']
     
-    update_cars(grid, car_data, world_size)
+    update_cars(grid, car_data, dt)
 
 
 def render_map(ax, scene_data, sonar):

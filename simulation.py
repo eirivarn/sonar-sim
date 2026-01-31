@@ -368,19 +368,22 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
     
     # INTERACTIVE GUI MODE (original behavior)
     # Setup visualization
+    from src.config import VISUALIZATION_CONFIG
+    dt = VISUALIZATION_CONFIG['dt']
+    
     fig, ax_sonar, ax_map, ax_gt = setup_figure(scene_type)
     
     # Create keyboard handler
     on_key = create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, 
-                                     ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
+                                     ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     fig.canvas.mpl_connect('key_press_event', on_key)
     
     # Initial display
-    update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
+    update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     
     # Setup continuous animation
     anim = setup_animation(fig, sonar, grid, dynamic_objects, scene_module, 
-                          ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter)
+                          ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     
     # Print controls
     print_controls()

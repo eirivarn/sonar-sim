@@ -61,26 +61,27 @@ class PathGenerator(ABC):
 
 
 class CircularPath(PathGenerator):
-    """Circular path inside a cage with randomized distance and orientation.
+    """Circular path inside a cage with smooth continuous motion.
     
-    Generates positions along a circle with:
-    - Variable distance from center (radius +/- variation)
-    - Variable orientation (looking inward, tangent, or outward)
-    - Optional height variation (for 3D extension)
+    Generates positions along a circle using incremental steps instead of
+    pre-generating a fixed path. Each call to next() advances the angle
+    and calculates position/orientation on-the-fly.
     
     Args:
         center: [x, y] center of circle
         radius: Mean radius of circular path
-        num_samples: Number of positions to sample
-        radius_variation: Std dev of radius variation (meters)
+        num_samples: Number of positions to sample (used to calculate angle step)
+        radius_variation: Amplitude of radius variation (meters)
         orientation_mode: 'inward' (default), 'tangent', 'outward', or 'mixed'
-        orientation_noise_deg: Random noise added to orientation (degrees)
-        seed: Random seed for reproducibility
+        orientation_noise_deg: Amplitude of orientation variation (degrees)
+        seed: Random seed for reproducibility (not used in smooth mode)
     """
     
     def __init__(self, center, radius, num_samples=100, 
                  radius_variation=1.0, orientation_mode='inward',
-                 orientation_noise_deg=15.0, seed=None):
+                 orientation_noise_deg=15.0, seed=None, dt=0.033):
+        from src.config import DATA_COLLECTION_CONFIG, VISUALIZATION_CONFIG
+        
         self.center = np.array(center)
         self.radius = radius
         self.num_samples = num_samples
@@ -88,74 +89,96 @@ class CircularPath(PathGenerator):
         self.orientation_mode = orientation_mode
         self.orientation_noise_deg = orientation_noise_deg
         
-        if seed is not None:
-            np.random.seed(seed)
+        # Use dt from config if not provided
+        self.dt = dt if dt != 0.033 else VISUALIZATION_CONFIG.get('dt', 0.033)
         
-        # Pre-generate all positions
-        self.positions = []
-        angles = np.linspace(0, 2 * np.pi, num_samples, endpoint=False)
+        # Calculate angular velocity based on desired duration for full circle
+        duration = DATA_COLLECTION_CONFIG['circular_path_duration_seconds']
+        self.angular_velocity = (2 * np.pi) / duration  # radians per second
         
-        for angle in angles:
-            # Radius with variation
-            r = self.radius + np.random.randn() * self.radius_variation
-            r = np.clip(r, 2.0, self.radius * 1.5)  # Keep reasonable bounds
-            
-            # Position on circle
-            x = self.center[0] + r * np.cos(angle)
-            y = self.center[1] + r * np.sin(angle)
-            pos = np.array([x, y])
-            
-            # Direction based on mode
-            if orientation_mode == 'inward':
-                # Look toward center
+        # Angle step per frame based on angular velocity and time step
+        self.angle_step = self.angular_velocity * self.dt
+        
+        # State: current angle and sample index
+        self.current_angle = 0.0
+        self.current_index = 0
+    
+    def _calculate_position(self, angle, index):
+        """Calculate position and direction for given angle and index."""
+        from src.config import DATA_COLLECTION_CONFIG
+        
+        # Smooth radius variation using multiple sine waves from config
+        radius_wave = 0.0
+        for wave in DATA_COLLECTION_CONFIG['radius_sine_waves']:
+            radius_wave += np.sin(angle * wave['frequency']) * wave['amplitude']
+        
+        r = self.radius + radius_wave * self.radius_variation
+        r = np.clip(r, 2.0, self.radius * 1.5)  # Keep reasonable bounds
+        
+        # Position on circle
+        x = self.center[0] + r * np.cos(angle)
+        y = self.center[1] + r * np.sin(angle)
+        pos = np.array([x, y])
+        
+        # Direction based on mode
+        if self.orientation_mode == 'inward':
+            base_dir = self.center - pos
+        elif self.orientation_mode == 'tangent':
+            base_dir = np.array([-np.sin(angle), np.cos(angle)])
+        elif self.orientation_mode == 'outward':
+            base_dir = pos - self.center
+        elif self.orientation_mode == 'mixed':
+            # Use angle to determine mode smoothly
+            mode_val = np.sin(angle * 3)
+            if mode_val < -0.33:
                 base_dir = self.center - pos
-            elif orientation_mode == 'tangent':
-                # Look along tangent (perpendicular to radius)
-                base_dir = np.array([-np.sin(angle), np.cos(angle)])
-            elif orientation_mode == 'outward':
-                # Look away from center
+            elif mode_val > 0.33:
                 base_dir = pos - self.center
-            elif orientation_mode == 'mixed':
-                # Random mix
-                mode_choice = np.random.choice(['inward', 'tangent', 'outward'])
-                if mode_choice == 'inward':
-                    base_dir = self.center - pos
-                elif mode_choice == 'tangent':
-                    base_dir = np.array([-np.sin(angle), np.cos(angle)])
-                else:
-                    base_dir = pos - self.center
             else:
-                raise ValueError(f"Unknown orientation_mode: {orientation_mode}")
-            
-            # Normalize base direction
-            base_dir = base_dir / (np.linalg.norm(base_dir) + 1e-9)
-            
-            # Add orientation noise
-            noise_angle = np.deg2rad(np.random.randn() * self.orientation_noise_deg)
-            cos_n, sin_n = np.cos(noise_angle), np.sin(noise_angle)
-            direction = np.array([
-                base_dir[0] * cos_n - base_dir[1] * sin_n,
-                base_dir[0] * sin_n + base_dir[1] * cos_n
-            ])
-            direction = direction / (np.linalg.norm(direction) + 1e-9)
-            
-            self.positions.append((pos, direction))
+                base_dir = np.array([-np.sin(angle), np.cos(angle)])
+        else:
+            raise ValueError(f"Unknown orientation_mode: {self.orientation_mode}")
         
-        self.index = 0
+        # Normalize base direction
+        base_dir = base_dir / (np.linalg.norm(base_dir) + 1e-9)
+        
+        # Smooth orientation variation using multiple sine waves from config
+        smooth_noise = 0.0
+        for wave in DATA_COLLECTION_CONFIG['orientation_sine_waves']:
+            phase = wave.get('phase_offset', 0.0) * index
+            smooth_noise += (np.sin(angle * wave['frequency'] + phase) * 
+                           wave['amplitude'])
+        smooth_noise *= np.deg2rad(self.orientation_noise_deg)
+        
+        cos_n, sin_n = np.cos(smooth_noise), np.sin(smooth_noise)
+        direction = np.array([
+            base_dir[0] * cos_n - base_dir[1] * sin_n,
+            base_dir[0] * sin_n + base_dir[1] * cos_n
+        ])
+        direction = direction / (np.linalg.norm(direction) + 1e-9)
+        
+        return pos, direction
     
     def __iter__(self):
-        self.index = 0
+        self.current_angle = 0.0
+        self.current_index = 0
         return self
     
     def __next__(self):
-        if self.index >= len(self.positions):
+        if self.current_index >= self.num_samples:
             raise StopIteration
-        pos, direction = self.positions[self.index]
-        self.index += 1
+        
+        # Calculate position on-the-fly using current state
+        pos, direction = self._calculate_position(self.current_angle, self.current_index)
+        
+        # Advance state for next iteration
+        self.current_angle += self.angle_step
+        self.current_index += 1
+        
         return pos, direction
     
     def __len__(self):
-        return len(self.positions)
+        return self.num_samples
 
 
 class GridPath(PathGenerator):
@@ -366,7 +389,7 @@ def get_path_generator(path_type, scene_config, num_samples=100, seed=None, **kw
     if path_type == 'circular':
         # For fish cage: circle inside the net
         if scene_type == 'fish_cage':
-            from config import SCENE_CONFIG
+            from src.config import SCENE_CONFIG
             center = SCENE_CONFIG['cage_center']
             radius = SCENE_CONFIG['cage_radius'] * 0.7  # Inside the cage
         else:

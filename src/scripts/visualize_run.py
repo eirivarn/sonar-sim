@@ -281,7 +281,7 @@ def create_visualization(frame_data, run_config, material_colors=None):
     return fig
 
 
-def create_video(run_data, output_path, fps=10, dpi=100):
+def create_video(run_data, output_path, fps=30, dpi=100):
     """Create video from run data.
     
     Args:
@@ -525,7 +525,7 @@ def main():
     parser.add_argument('run_dir', type=str, help='Path to run directory')
     parser.add_argument('--output', type=str, help='Output video file (.mp4, .avi, .gif)')
     parser.add_argument('--interactive', action='store_true', help='Interactive playback')
-    parser.add_argument('--fps', type=int, default=10, help='Frames per second for video (default: 10)')
+    parser.add_argument('--fps', type=int, default=30, help='Frames per second for video (default: 30)')
     parser.add_argument('--dpi', type=int, default=100, help='Resolution for video (default: 100)')
     
     args = parser.parse_args()
