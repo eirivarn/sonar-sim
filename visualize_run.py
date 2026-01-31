@@ -51,6 +51,14 @@ def load_run_data(run_dir):
     with open(run_dir / 'run_config.json') as f:
         run_config = json.load(f)
     
+    # Load scene snapshot if available
+    scene_snapshot = None
+    scene_snapshot_path = run_dir / 'scene_snapshot.json'
+    if scene_snapshot_path.exists():
+        with open(scene_snapshot_path) as f:
+            scene_snapshot = json.load(f)
+        print(f"Loaded scene snapshot: {scene_snapshot['scene_type']}")
+    
     # Find all frames
     sonar_files = sorted((run_dir / 'sonar').glob('frame_*.npy'))
     num_frames = len(sonar_files)
@@ -75,6 +83,7 @@ def load_run_data(run_dir):
     
     return {
         'run_config': run_config,
+        'scene_snapshot': scene_snapshot,
         'frames': frames,
         'num_frames': num_frames
     }
@@ -85,7 +94,7 @@ def create_visualization(frame_data, run_config, material_colors=None):
     
     Args:
         frame_data: Dict with sonar, ground_truth, metadata
-        run_config: Run configuration dict
+        run_config: Run configuration dict (includes scene_snapshot)
         material_colors: Optional material color mapping
         
     Returns:
@@ -136,26 +145,103 @@ def create_visualization(frame_data, run_config, material_colors=None):
     ax_sonar.grid(False)
     
     # === MAP PANEL ===
-    # For now, show placeholder (would need scene info to reconstruct properly)
-    ax_map.text(0.5, 0.5, 'Map view requires scene reconstruction\n(Use interactive mode with --scene)', 
-                ha='center', va='center', transform=ax_map.transAxes)
+    scene_snapshot = run_config.get('scene_snapshot')
+    world_size = run_config.get('world_size', 30.0)
+    
+    ax_map.set_xlim(0, world_size)
+    ax_map.set_ylim(world_size, 0)  # Inverted Y
+    ax_map.set_aspect('equal')
     ax_map.set_title('World Map')
     ax_map.set_xlabel('X (m)')
     ax_map.set_ylabel('Y (m)')
+    ax_map.grid(True, alpha=0.3)
     
-    if 'metadata' in frame_data:
-        # Draw sonar position if available
-        world_size = run_config.get('world_size', 30.0)
-        ax_map.set_xlim(0, world_size)
-        ax_map.set_ylim(world_size, 0)
-        ax_map.set_aspect('equal')
+    # Draw scene if available
+    if scene_snapshot:
+        scene_type = scene_snapshot.get('scene_type', '')
         
+        if scene_type == 'fish_cage':
+            # Import config to get cage parameters
+            import sys
+            from pathlib import Path as P
+            sys.path.insert(0, str(P(__file__).parent))
+            from config import SCENE_CONFIG
+            
+            # Draw cage outline (12-sided polygon)
+            cage_center = np.array(SCENE_CONFIG['cage_center'])
+            cage_radius = SCENE_CONFIG['cage_radius']
+            num_sides = SCENE_CONFIG.get('num_sides', 12)
+            
+            # Create polygon vertices
+            angles = np.linspace(0, 2*np.pi, num_sides + 1)
+            polygon_x = cage_center[0] + cage_radius * np.cos(angles)
+            polygon_y = cage_center[1] + cage_radius * np.sin(angles)
+            
+            # Draw cage outline
+            ax_map.plot(polygon_x, polygon_y, 'b-', linewidth=2, label='Cage Net')
+            
+            # Draw individual panels (slightly lighter)
+            for i in range(num_sides):
+                ax_map.plot([polygon_x[i], polygon_x[i+1]], 
+                           [polygon_y[i], polygon_y[i+1]], 
+                           'b-', linewidth=1.5, alpha=0.7)
+            
+            # Draw dynamic objects if in metadata
+            if 'metadata' in frame_data and 'dynamic_objects' in frame_data['metadata']:
+                fish_data = frame_data['metadata']['dynamic_objects'].get('fish_data', [])
+                if fish_data:
+                    fish_pos = np.array([[f['pos'][0], f['pos'][1]] for f in fish_data])
+                    ax_map.scatter(fish_pos[:, 0], fish_pos[:, 1], 
+                                 c='orange', s=3, alpha=0.6, label='Fish')
+        
+        elif scene_type == 'street':
+            # Import config for street parameters
+            import sys
+            from pathlib import Path as P
+            sys.path.insert(0, str(P(__file__).parent))
+            from config import STREET_SCENE_CONFIG
+            
+            # Draw street
+            street_width = STREET_SCENE_CONFIG['street_width']
+            street_center = world_size / 2
+            street_rect = plt.Rectangle(
+                [0, street_center - street_width/2], 
+                world_size, street_width,
+                facecolor='gray', alpha=0.5, label='Street'
+            )
+            ax_map.add_patch(street_rect)
+    
+    # Draw sonar position and FOV
+    if 'metadata' in frame_data:
         pos = frame_data['metadata']['sonar_position']
         direction = frame_data['metadata']['sonar_direction']
+        fov_deg = frame_data['metadata'].get('fov_deg', 120.0)
+        range_m = frame_data['metadata'].get('range_m', 20.0)
         
-        ax_map.scatter(pos[0], pos[1], c='red', s=100, marker='^', zorder=5)
+        # Sonar position
+        ax_map.scatter(pos[0], pos[1], c='red', s=100, marker='^', 
+                      label='Sonar', zorder=5)
+        
+        # Direction arrow
         ax_map.arrow(pos[0], pos[1], direction[0]*2, direction[1]*2,
-                    head_width=0.5, head_length=0.3, fc='red', ec='red')
+                    head_width=0.5, head_length=0.3, fc='red', ec='red', zorder=5)
+        
+        # FOV cone
+        fov_rad = np.deg2rad(fov_deg)
+        dir_angle = np.arctan2(direction[1], direction[0])
+        left_angle = dir_angle + fov_rad / 2
+        right_angle = dir_angle - fov_rad / 2
+        
+        cone_length = range_m * 0.5
+        left_x = pos[0] + cone_length * np.cos(left_angle)
+        left_y = pos[1] + cone_length * np.sin(left_angle)
+        right_x = pos[0] + cone_length * np.cos(right_angle)
+        right_y = pos[1] + cone_length * np.sin(right_angle)
+        
+        ax_map.plot([pos[0], left_x], [pos[1], left_y], 'r--', alpha=0.4, linewidth=1)
+        ax_map.plot([pos[0], right_x], [pos[1], right_y], 'r--', alpha=0.4, linewidth=1)
+    
+    ax_map.legend(loc='upper right', fontsize=8)
     
     # === GROUND TRUTH PANEL ===
     ground_truth = frame_data['ground_truth']
@@ -207,8 +293,10 @@ def create_video(run_data, output_path, fps=10, dpi=100):
     output_path = Path(output_path)
     frames = run_data['frames']
     run_config = run_data['run_config']
-    
-    print(f"Creating video: {output_path}")
+        # Add scene snapshot to run_config for rendering
+    if 'scene_snapshot' in run_data and run_data['scene_snapshot']:
+        run_config['scene_snapshot'] = run_data['scene_snapshot']
+        print(f"Creating video: {output_path}")
     print(f"Frames: {len(frames)}, FPS: {fps}, DPI: {dpi}")
     
     # Create figure for first frame
@@ -222,12 +310,19 @@ def create_video(run_data, output_path, fps=10, dpi=100):
         for ax in fig.axes:
             ax.clear()
         
-        # Recreate visualization (simpler than updating)
+        # Use the full create_visualization function
         frame_data = frames[frame_idx]
         
+        # Get material colors
+        material_colors = {
+            0: [0, 0, 0], 1: [0, 100, 255], 2: [0, 150, 200], 3: [255, 140, 0],
+            4: [128, 128, 128], 5: [0, 200, 0], 6: [200, 200, 100]
+        }
+        
+        # Render all panels using the same logic as create_visualization
         ax_sonar, ax_map, ax_gt = fig.axes
         
-        # Sonar panel
+        # === SONAR PANEL ===
         sonar_image = frame_data['sonar']
         image_db = 10 * np.log10(np.maximum(sonar_image, 1e-10))
         image_normalized = np.clip((image_db + 60.0) / 60.0, 0, 1)
@@ -236,37 +331,98 @@ def create_video(run_data, output_path, fps=10, dpi=100):
         if 'metadata' in frame_data:
             pos = frame_data['metadata']['sonar_position']
             ax_sonar.set_title(f'Sonar View - Polar\nPos: [{pos[0]:.1f}, {pos[1]:.1f}]')
+        else:
+            ax_sonar.set_title('Sonar View - Polar')
         ax_sonar.set_xlabel('Beams')
         ax_sonar.set_ylabel('Range Bins')
+        ax_sonar.grid(False)
         
-        # Map panel (placeholder)
-        ax_map.text(0.5, 0.5, 'Map view', ha='center', va='center', transform=ax_map.transAxes)
+        # === MAP PANEL ===
+        scene_snapshot = run_config.get('scene_snapshot')
+        world_size = run_config.get('world_size', 30.0)
+        
+        ax_map.set_xlim(0, world_size)
+        ax_map.set_ylim(world_size, 0)  # Inverted Y
+        ax_map.set_aspect('equal')
         ax_map.set_title('World Map')
+        ax_map.set_xlabel('X (m)')
+        ax_map.set_ylabel('Y (m)')
+        ax_map.grid(True, alpha=0.3)
         
+        # Draw scene if available
+        if scene_snapshot:
+            scene_type = scene_snapshot.get('scene_type', '')
+            
+            if scene_type == 'fish_cage':
+                import sys
+                from pathlib import Path as P
+                sys.path.insert(0, str(P(__file__).parent))
+                from config import SCENE_CONFIG
+                
+                cage_center = np.array(SCENE_CONFIG['cage_center'])
+                cage_radius = SCENE_CONFIG['cage_radius']
+                num_sides = SCENE_CONFIG.get('num_sides', 12)
+                
+                # Create polygon vertices
+                angles = np.linspace(0, 2*np.pi, num_sides + 1)
+                polygon_x = cage_center[0] + cage_radius * np.cos(angles)
+                polygon_y = cage_center[1] + cage_radius * np.sin(angles)
+                
+                # Draw cage outline
+                ax_map.plot(polygon_x, polygon_y, 'b-', linewidth=2, label='Cage Net')
+                
+                # Draw individual panels
+                for i in range(num_sides):
+                    ax_map.plot([polygon_x[i], polygon_x[i+1]], 
+                               [polygon_y[i], polygon_y[i+1]], 
+                               'b-', linewidth=1.5, alpha=0.7)
+                
+                if 'metadata' in frame_data and 'dynamic_objects' in frame_data['metadata']:
+                    fish_data = frame_data['metadata']['dynamic_objects'].get('fish_data', [])
+                    if fish_data:
+                        fish_pos = np.array([[f['pos'][0], f['pos'][1]] for f in fish_data])
+                        ax_map.scatter(fish_pos[:, 0], fish_pos[:, 1], 
+                                     c='orange', s=3, alpha=0.6, label='Fish')
+        
+        # Draw sonar position and FOV
         if 'metadata' in frame_data:
-            world_size = run_config.get('world_size', 30.0)
-            ax_map.set_xlim(0, world_size)
-            ax_map.set_ylim(world_size, 0)
             pos = frame_data['metadata']['sonar_position']
             direction = frame_data['metadata']['sonar_direction']
-            ax_map.scatter(pos[0], pos[1], c='red', s=100, marker='^')
+            fov_deg = frame_data['metadata'].get('fov_deg', 120.0)
+            range_m = frame_data['metadata'].get('range_m', 20.0)
+            
+            ax_map.scatter(pos[0], pos[1], c='red', s=100, marker='^', 
+                          label='Sonar', zorder=5)
             ax_map.arrow(pos[0], pos[1], direction[0]*2, direction[1]*2,
-                        head_width=0.5, fc='red', ec='red')
+                        head_width=0.5, head_length=0.3, fc='red', ec='red', zorder=5)
+            
+            fov_rad = np.deg2rad(fov_deg)
+            dir_angle = np.arctan2(direction[1], direction[0])
+            left_angle = dir_angle + fov_rad / 2
+            right_angle = dir_angle - fov_rad / 2
+            
+            cone_length = range_m * 0.5
+            left_x = pos[0] + cone_length * np.cos(left_angle)
+            left_y = pos[1] + cone_length * np.sin(left_angle)
+            right_x = pos[0] + cone_length * np.cos(right_angle)
+            right_y = pos[1] + cone_length * np.sin(right_angle)
+            
+            ax_map.plot([pos[0], left_x], [pos[1], left_y], 'r--', alpha=0.4, linewidth=1)
+            ax_map.plot([pos[0], right_x], [pos[1], right_y], 'r--', alpha=0.4, linewidth=1)
         
-        # Ground truth panel
+        ax_map.legend(loc='upper right', fontsize=8)
+        
+        # === GROUND TRUTH PANEL ===
         ground_truth = frame_data['ground_truth']
-        material_colors = {
-            0: [0, 0, 0], 1: [0, 100, 255], 2: [0, 150, 200], 3: [255, 140, 0],
-            4: [128, 128, 128], 5: [0, 200, 0], 6: [200, 200, 100]
-        }
         gt_rgb = np.zeros((ground_truth.shape[0], ground_truth.shape[1], 3), dtype=np.uint8)
         for mat_id, color in material_colors.items():
             gt_rgb[ground_truth == mat_id] = color
         
         ax_gt.imshow(gt_rgb, aspect='auto', origin='lower')
-        ax_gt.set_title('Ground Truth')
+        ax_gt.set_title('Ground Truth - Material Segmentation')
         ax_gt.set_xlabel('Beams')
         ax_gt.set_ylabel('Range Bins')
+        ax_gt.grid(False)
         
         fig.suptitle(f"Run: {run_config['run_name']} - Frame {frame_idx}", fontsize=14, weight='bold')
         

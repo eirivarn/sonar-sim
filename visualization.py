@@ -366,6 +366,23 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
             'range_m': sonar.range_m,
             'fov_deg': sonar.fov_deg,
         }
+        
+        # Save dynamic object positions for map reconstruction
+        if dynamic_objects:
+            metadata['dynamic_objects'] = {}
+            for key, value in dynamic_objects.items():
+                if isinstance(value, list):
+                    # List of objects - save positions only for efficiency
+                    positions = []
+                    for obj in value:
+                        if 'pos' in obj:
+                            pos_data = {'pos': obj['pos'].tolist()}
+                            # Include orientation if available
+                            if 'orientation' in obj:
+                                pos_data['orientation'] = float(obj['orientation'])
+                            positions.append(pos_data)
+                    metadata['dynamic_objects'][key] = positions
+        
         meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
         with open(meta_path, 'w') as f:
             json.dump(metadata, f, indent=2)

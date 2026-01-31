@@ -245,6 +245,36 @@ def main(scene_path='scenes.fish_cage_scene', save_run=None, collect_mode=None, 
         with open(save_dir / 'run_config.json', 'w') as f:
             json.dump(run_config, f, indent=2)
         
+        # Save scene snapshot for visualization reconstruction
+        scene_snapshot = {
+            'scene_path': scene_path,
+            'scene_type': scene_type,
+            'world_size': world_size,
+            'dynamic_objects_initial': {}
+        }
+        
+        # Serialize dynamic objects (convert numpy arrays to lists)
+        for key, value in dynamic_objects.items():
+            if isinstance(value, list):
+                # List of objects (fish, cars, etc.)
+                serialized = []
+                for obj in value:
+                    obj_dict = {}
+                    for k, v in obj.items():
+                        if isinstance(v, np.ndarray):
+                            obj_dict[k] = v.tolist()
+                        else:
+                            obj_dict[k] = v
+                    serialized.append(obj_dict)
+                scene_snapshot['dynamic_objects_initial'][key] = serialized
+            elif isinstance(value, np.ndarray):
+                scene_snapshot['dynamic_objects_initial'][key] = value.tolist()
+            else:
+                scene_snapshot['dynamic_objects_initial'][key] = value
+        
+        with open(save_dir / 'scene_snapshot.json', 'w') as f:
+            json.dump(scene_snapshot, f, indent=2)
+        
         frame_counter = {'count': 0}
         print(f"\nSaving run data to: {save_dir}")
         print("Data will be saved in:")
