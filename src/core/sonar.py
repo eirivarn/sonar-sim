@@ -137,6 +137,15 @@ import numpy as np
 from src.config import SONAR_CONFIG
 from src.core.voxel_grid import VoxelGrid
 
+# Try to import numba-accelerated functions, fall back to pure Python if not available
+try:
+    from src.core.sonar_numba import scan_parallel_numba, compute_ground_truth_numba
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+    import warnings
+    warnings.warn("Numba not available - simulation will be slow. Install numba: pip install numba", RuntimeWarning)
+
 
 class VoxelSonar:
     """Sonar using voxel ray marching."""
@@ -171,6 +180,64 @@ class VoxelSonar:
             If return_ground_truth is True:
                 Tuple of (sonar_image, ground_truth_map) both (range_bins, num_beams)
         """
+        # Use Numba-accelerated version if available
+        if NUMBA_AVAILABLE:
+            return self._scan_numba(grid, return_ground_truth)
+        else:
+            return self._scan_python(grid, return_ground_truth)
+    
+    def _scan_numba(self, grid: VoxelGrid, return_ground_truth: bool = True):
+        """Numba-accelerated scan."""
+        fov_rad = np.deg2rad(self.fov_deg)
+        
+        # Compute ground truth if needed
+        ground_truth = None
+        if return_ground_truth:
+            ground_truth = compute_ground_truth_numba(
+                grid.material_id, grid.size_x, grid.size_y, grid.voxel_size,
+                self.position[0], self.position[1], self.direction[0], self.direction[1],
+                self.range_m, self.range_bins, self.num_beams, fov_rad
+            )
+        
+        # Parallel ray marching for sonar image
+        image = scan_parallel_numba(
+            grid.density, grid.reflectivity, grid.absorption, grid.material_id,
+            grid.size_x, grid.size_y, grid.voxel_size,
+            self.position[0], self.position[1], self.direction[0], self.direction[1],
+            self.range_m, self.range_bins, self.num_beams, fov_rad,
+            SONAR_CONFIG['beam_pattern_falloff'],
+            SONAR_CONFIG['step_size_factor'],
+            SONAR_CONFIG['energy_threshold'],
+            SONAR_CONFIG['speckle_shape'],
+            SONAR_CONFIG['aspect_variation_std'],
+            SONAR_CONFIG['aspect_variation_range'][0],
+            SONAR_CONFIG['aspect_variation_range'][1],
+            SONAR_CONFIG['spreading_loss_min'],
+            SONAR_CONFIG['water_absorption'],
+            SONAR_CONFIG['jitter_probability'],
+            SONAR_CONFIG['jitter_std_base'],
+            SONAR_CONFIG['jitter_range_factor'],
+            SONAR_CONFIG['jitter_max_offset'],
+            SONAR_CONFIG['spread_probability'],
+            np.array(SONAR_CONFIG['spread_bin_options'], dtype=np.int32),
+            np.array(SONAR_CONFIG['spread_bin_probs'], dtype=np.float64),
+            SONAR_CONFIG['absorption_factor'],
+            SONAR_CONFIG['scattering_loss_factor']
+        )
+        
+        # TEMPORAL DECORRELATION
+        signal_mask = image > 1e-8
+        decorr_shape = SONAR_CONFIG['temporal_decorrelation_shape']
+        decorrelation_noise = np.random.gamma(shape=decorr_shape, scale=1.0/decorr_shape, size=image.shape)
+        image[signal_mask] *= decorrelation_noise[signal_mask]
+        
+        if return_ground_truth:
+            return image, ground_truth
+        else:
+            return image
+    
+    def _scan_python(self, grid: VoxelGrid, return_ground_truth: bool = True):
+        """Pure Python scan (fallback when Numba not available)."""
         image = np.zeros((self.range_bins, self.num_beams), dtype=np.float32)
         ground_truth = np.zeros((self.range_bins, self.num_beams), dtype=np.uint8) if return_ground_truth else None
         

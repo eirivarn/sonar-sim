@@ -169,6 +169,7 @@ Update Loop:
 import numpy as np
 import matplotlib.pyplot as plt
 from src.core.sonar import VoxelSonar
+from src.core.robot import Robot
 from src.scripts.visualization import (setup_figure, update_display, create_keyboard_handler, 
                            setup_animation, print_controls)
 
@@ -197,7 +198,6 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
         return
     
     # Create the scene
-    print(f"Loading scene: {scene_path}")
     scene_config = scene_module.create_scene()
     
     grid = scene_config['grid']
@@ -205,10 +205,16 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
     scene_type = scene_config['scene_type']
     dynamic_objects = scene_config['dynamic_objects']
     
-    print("Initializing sonar...")
+    # Create robot at starting position
+    start_pos = scene_config['sonar_start_pos']
+    start_dir = scene_config['sonar_start_dir']
+    start_yaw = np.arctan2(start_dir[1], start_dir[0])  # Convert direction to yaw angle
+    
+    robot = Robot(initial_x=start_pos[0], initial_y=start_pos[1], initial_yaw=start_yaw)
+    robot_state = robot.get_state()
     sonar = VoxelSonar(
-        position=scene_config['sonar_start_pos'],
-        direction=scene_config['sonar_start_dir']
+        position=robot_state['position'],
+        direction=robot_state['direction']
         # range_m uses SONAR_CONFIG['range_m'] by default
     )
     
@@ -374,15 +380,15 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
     fig, ax_sonar, ax_map, ax_gt = setup_figure(scene_type)
     
     # Create keyboard handler
-    on_key = create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, 
+    on_key = create_keyboard_handler(sonar, robot, grid, dynamic_objects, scene_module, 
                                      ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     fig.canvas.mpl_connect('key_press_event', on_key)
     
     # Initial display
-    update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
+    update_display(sonar, robot, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     
     # Setup continuous animation
-    anim = setup_animation(fig, sonar, grid, dynamic_objects, scene_module, 
+    anim = setup_animation(fig, sonar, robot, grid, dynamic_objects, scene_module, 
                           ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     
     # Print controls
@@ -390,6 +396,10 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
     
     plt.tight_layout()
     plt.show()
+    
+    # Print performance profile after window closes (if enabled)
+    if args.profile:
+        profiler.report(min_time=0.01, top_n=15)
 
 
 if __name__ == '__main__':
@@ -410,8 +420,16 @@ if __name__ == '__main__':
                        default='inward', help='Orientation mode for circular path (default: inward)')
     parser.add_argument('--orientation-noise', type=float, default=15.0,
                        help='Orientation noise in degrees for circular path (default: 15.0)')
+    parser.add_argument('--profile', action='store_true',
+                       help='Enable performance profiling and show report on exit')
     
     args = parser.parse_args()
+    
+    # Configure profiler
+    from src.utils.profiler import get_profiler
+    profiler = get_profiler()
+    if not args.profile:
+        profiler.disable()
     
     # Build path_kwargs from arguments
     path_kwargs = {

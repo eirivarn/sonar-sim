@@ -7,7 +7,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.core.voxel_grid import VoxelGrid
 from src.core.materials import FISH, NET, ROPE, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY
-from src.core.dynamics import update_fish, update_debris
+
+# Use optimized dynamics if available
+try:
+    from src.core.dynamics_optimized import update_fish_optimized as update_fish
+    from src.core.dynamics_optimized import update_debris_optimized as update_debris
+except ImportError:
+    from src.core.dynamics import update_fish, update_debris
+
 from src.config import SCENE_CONFIG
 
 
@@ -150,8 +157,6 @@ def create_scene():
         np.array([cage_center[0] + 0.15, cage_center[1] + 0.15]),
         ROPE
     )
-    
-    print(f"Created fish cage: {len(fish_data)} fish")
     
     return {
         'grid': grid,

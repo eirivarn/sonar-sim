@@ -188,6 +188,9 @@ from matplotlib.patches import Patch
 from src.config import VISUALIZATION_CONFIG
 from src.core.materials import (MATERIAL_ID_EMPTY, MATERIAL_ID_NET, MATERIAL_ID_ROPE, 
                        MATERIAL_ID_FISH, MATERIAL_ID_DEBRIS_LIGHT)
+from src.utils.profiler import get_profiler
+import json
+from datetime import datetime
 
 
 def setup_figure(scene_type: str):
@@ -219,11 +222,12 @@ def setup_figure(scene_type: str):
     return fig, ax_sonar, ax_map, ax_gt
 
 
-def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
+def update_display(sonar, robot, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
     """Update all display panels.
     
     Args:
         sonar: VoxelSonar instance
+        robot: Robot instance (can be None for backward compatibility)
         grid: VoxelGrid instance
         dynamic_objects: Dynamic objects dict from scene
         scene_module: Scene module with update_scene and render_map functions
@@ -235,44 +239,25 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
         frame_counter: Optional dict with 'count' key to track frame numbers
         dt: Time step in seconds for physics updates
     """
+    profiler = get_profiler()
+    
     # Update dynamic objects using scene's update function
-    scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
+    with profiler.measure('scene_update'):
+        scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
     
-    print(f"Scanning from position {sonar.position}...")
-    sonar_image_polar, ground_truth_map = sonar.scan(grid, return_ground_truth=True)
-    
-    # DEBUG: Check what materials are in the ground truth
-    unique_materials, counts = np.unique(ground_truth_map, return_counts=True)
-    print(f"DEBUG: Ground truth materials found:")
-    material_names = {
-        0: "Empty", 1: "Net", 2: "Rope", 3: "Fish", 
-        4: "Wall", 5: "Biomass", 6: "Debris_Light", 
-        7: "Debris_Medium", 8: "Debris_Heavy", 9: "Concrete",
-        10: "Wood", 11: "Foliage", 12: "Metal", 13: "Glass"
-    }
-    for mat_id, count in zip(unique_materials, counts):
-        pct = 100.0 * count / ground_truth_map.size
-        print(f"  Material {mat_id} ({material_names.get(mat_id, 'Unknown')}): {count} pixels ({pct:.2f}%)")
-    
-    # DEBUG: Check what's actually in the voxel grid
-    grid_unique, grid_counts = np.unique(grid.material_id, return_counts=True)
-    print(f"DEBUG: Materials in voxel grid:")
-    for mat_id, count in zip(grid_unique, grid_counts):
-        pct = 100.0 * count / grid.material_id.size
-        print(f"  Material {mat_id} ({material_names.get(mat_id, 'Unknown')}): {count} voxels ({pct:.2f}%)")
-    
-    # Verify dimensions
-    print(f"Sonar image shape: {sonar_image_polar.shape}")
+    with profiler.measure('sonar_scan'):
+        sonar_image_polar, ground_truth_map = sonar.scan(grid, return_ground_truth=True)
     
     # Convert polar to dB and normalize for display
-    image_db = 10 * np.log10(np.maximum(sonar_image_polar, 1e-10))
-    db_norm = VISUALIZATION_CONFIG['db_normalization']
-    image_normalized = np.clip((image_db + db_norm) / db_norm, 0, 1)
+    with profiler.measure('image_processing'):
+        image_db = 10 * np.log10(np.maximum(sonar_image_polar, 1e-10))
+        db_norm = VISUALIZATION_CONFIG['db_normalization']
+        image_norm = np.clip((image_db + db_norm) / db_norm, 0, 1)
     
     # === SONAR DISPLAY (Polar) ===
     ax_sonar.clear()
     cmap = VISUALIZATION_CONFIG['sonar_colormap']
-    ax_sonar.imshow(image_normalized, cmap=cmap, aspect='auto', origin='lower')
+    ax_sonar.imshow(image_norm, cmap=cmap, aspect='auto', origin='lower')
     ax_sonar.set_title(f'Sonar View - Polar\nPos: [{sonar.position[0]:.1f}, {sonar.position[1]:.1f}]')
     ax_sonar.set_xlabel('Beams')
     ax_sonar.set_ylabel('Range Bins')
@@ -359,7 +344,6 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
         np.save(gt_path, ground_truth_map)
         
         # Save sonar metadata (position, direction) as JSON
-        import json
         metadata = {
             'frame': frame_num,
             'sonar_position': sonar.position.tolist(),
@@ -389,15 +373,14 @@ def update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map,
             json.dump(metadata, f, indent=2)
         
         frame_counter['count'] += 1
-        
-        if frame_num % 10 == 0:
-            print(f"Saved frame {frame_num}")
 
 
-def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
+def create_keyboard_handler(sonar, robot, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
     """Create keyboard event handler function.
     
     Args:
+        sonar: VoxelSonar instance
+        robot: Robot instance to control
         save_dir: Optional directory to save frames
         frame_counter: Optional dict with 'count' key
         dt: Time step in seconds for physics updates
@@ -406,38 +389,63 @@ def create_keyboard_handler(sonar, grid, dynamic_objects, scene_module, ax_sonar
         Function that handles keyboard events
     """
     def on_key(event):
-        """Handle keyboard input."""
-        move_speed = VISUALIZATION_CONFIG['move_speed']
-        rotate_speed = VISUALIZATION_CONFIG['rotate_speed']
-        
-        if event.key == 'w':
-            sonar.move(sonar.direction * move_speed)
-        elif event.key == 's':
-            sonar.move(-sonar.direction * move_speed)
-        elif event.key == 'a':
-            # Move perpendicular (left)
-            perp = np.array([-sonar.direction[1], sonar.direction[0]])
-            sonar.move(-perp * move_speed)
-        elif event.key == 'd':
-            # Move perpendicular (right)
-            perp = np.array([-sonar.direction[1], sonar.direction[0]])
-            sonar.move(perp * move_speed)
-        elif event.key == 'left':
-            sonar.rotate(-rotate_speed)
-        elif event.key == 'right':
-            sonar.rotate(rotate_speed)
-        else:
+        """Handle keyboard input to control robot thrusters."""
+        # Quit
+        if event.key == 'q':
+            plt.close('all')
             return
         
-        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
+        # Calculate thrust based on key press
+        forward = 0.0
+        lateral = 0.0
+        yaw_rate = 0.0
+        
+        # Forward/backward thrust
+        if event.key == 'w':
+            forward = 1.0
+        elif event.key == 's':
+            forward = -1.0
+        
+        # Lateral thrust
+        elif event.key == 'a':
+            lateral = -1.0
+        elif event.key == 'd':
+            lateral = 1.0
+        
+        # Yaw rate (swapped for correct direction)
+        elif event.key == 'left':
+            yaw_rate = -0.5  # Reduced for smoother rotation
+        elif event.key == 'right':
+            yaw_rate = 0.5  # Reduced for smoother rotation
+        else:
+            return  # Ignore other keys
+        
+        # Apply thrust to robot (impulse-style control)
+        robot.set_thrust(forward, lateral, yaw_rate)
+        
+        # Update robot physics multiple times for responsiveness
+        for _ in range(5):  # More updates for smoother rotation
+            robot.update(dt)
+        
+        # Sync sonar position to robot
+        state = robot.get_state()
+        sonar.position = state['position']
+        sonar.direction = state['direction']
+        
+        # Clear thrust after impulse
+        robot.set_thrust(0, 0, 0)
+        
+        update_display(sonar, robot, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
     
     return on_key
 
 
-def setup_animation(fig, sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
+def setup_animation(fig, sonar, robot, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir=None, frame_counter=None, dt=0.1):
     """Setup matplotlib animation for continuous updates.
     
     Args:
+        sonar: VoxelSonar instance
+        robot: Robot instance
         save_dir: Optional directory to save frames
         frame_counter: Optional dict with 'count' key
         dt: Time step in seconds for physics updates
@@ -446,7 +454,19 @@ def setup_animation(fig, sonar, grid, dynamic_objects, scene_module, ax_sonar, a
         FuncAnimation object
     """
     def anim_update(frame):
-        update_display(sonar, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
+        profiler = get_profiler()
+        
+        # Update robot physics (applies drag/friction)
+        with profiler.measure('robot_physics'):
+            robot.update(dt)
+        
+        # Sync sonar position to robot
+        with profiler.measure('robot_sync'):
+            state = robot.get_state()
+            sonar.position = state['position']
+            sonar.direction = state['direction']
+        
+        update_display(sonar, robot, grid, dynamic_objects, scene_module, ax_sonar, ax_map, ax_gt, world_size, save_dir, frame_counter, dt)
         return []
     
     anim_interval = VISUALIZATION_CONFIG['animation_interval']
@@ -456,12 +476,18 @@ def setup_animation(fig, sonar, grid, dynamic_objects, scene_module, ax_sonar, a
 
 def print_controls():
     """Print control instructions."""
-    print("\nControls:")
-    print("  W/S: Move forward/back")
-    print("  A/D: Move left/right")
+    from src.utils.profiler import get_profiler
+    profiler = get_profiler()
+    
+    print("\nRobot Controls:")
+    print("  W: Forward thrust")
+    print("  S: Backward thrust")
+    print("  A: Left thrust")
+    print("  D: Right thrust")
     print("  Left/Right arrows: Rotate")
-    print("\nNote: Image flickers continuously due to:")
-    print("  - Acoustic speckle (coherent interference)")
-    print("  - Aspect angle variations (micro-scale roughness)")
-    print("  - Temporal decorrelation (net sway, water movement)")
-    print("  - Receiver noise (electronic/thermal)")
+    print("  Q: Quit simulation")
+    print("\nRobot has physics simulation with momentum and drag.")
+    
+    if profiler.enabled:
+        print("\n[Profiling enabled - performance report will show on exit]")
+    print("Multiple key presses accumulate velocity.\n")

@@ -151,8 +151,6 @@ def create_scene():
             car['material']
         )
     
-    print(f"Created street scene: {num_houses} houses, {num_trees} trees, {num_cars} cars")
-    
     return {
         'grid': grid,
         'world_size': world_size,
