@@ -269,14 +269,21 @@ def update_display(sonar, robot, grid, dynamic_objects, scene_module, ax_sonar, 
     # Use scene's custom map renderer
     scene_module.render_map(ax_map, dynamic_objects, sonar)
     
-    # Draw sonar position and direction (common to all scenes)
-    ax_map.scatter(sonar.position[0], sonar.position[1], c='red', s=100, marker='^', label='Sonar', zorder=5)
-    
-    # Draw sonar direction vector
-    arrow_length = 3.0
-    ax_map.arrow(sonar.position[0], sonar.position[1], 
-                 sonar.direction[0] * arrow_length, sonar.direction[1] * arrow_length,
-                 head_width=0.8, head_length=0.5, fc='red', ec='red', zorder=5)
+    # Draw sonar as oriented ellipse (robot body)
+    from matplotlib.patches import Ellipse
+    sonar_angle = np.arctan2(sonar.direction[1], sonar.direction[0])
+    sonar_ellipse = Ellipse(
+        xy=(sonar.position[0], sonar.position[1]),
+        width=1.5,  # Length along direction
+        height=0.8,  # Width perpendicular to direction
+        angle=np.degrees(sonar_angle),
+        facecolor='red',
+        edgecolor='darkred',
+        linewidth=2,
+        alpha=0.7,
+        zorder=5
+    )
+    ax_map.add_patch(sonar_ellipse)
     
     # Draw FOV cone
     fov_rad = np.deg2rad(sonar.fov_deg)

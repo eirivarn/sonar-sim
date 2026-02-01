@@ -1,179 +1,57 @@
-"""Dynamic object update functions for simulation.
+"""Dynamic object updates using spatial partitioning for O(N) performance.
 
-OVERVIEW:
----------
-This module handles updates for moving objects in the simulation. Each frame,
-dynamic objects are cleared from the voxel grid and redrawn at their new positions.
-
-DYNAMIC OBJECT PATTERN:
-----------------------
-All update functions follow the same pattern:
-1. Clear old positions from grid (grid.clear_*())
-2. Update object physics/AI (positions, velocities)
-3. Redraw objects at new positions (grid.set_*())
-
-This pattern ensures objects don't leave trails as they move.
-
-OBJECT REPRESENTATIONS:
-----------------------
-Dynamic objects are stored as lists of dictionaries:
-
-Fish:
-    {
-        'pos': np.array([x, y]),           # World position
-        'vel': np.array([vx, vy]),         # Velocity vector
-        'radii': np.array([length, width]), # Ellipse dimensions
-        'orientation': float,               # Rotation angle (radians)
-        'species': 'A' | 'B' | 'C'         # Behavior type
-    }
-
-Debris:
-    {
-        'pos': np.array([x, y]),
-        'vel': np.array([vx, vy]),
-        'size': float,                      # Radius
-        'material': Material object         # DEBRIS_LIGHT/MEDIUM/HEAVY
-    }
-
-Cars:
-    {
-        'pos': np.array([x, y]),           # Center position
-        'vel': np.array([vx, vy]),         # Velocity (moves along lane)
-        'length': float,
-        'width': float,
-        'material': METAL                   # All cars use metal
-    }
-
-FISH BEHAVIOR (update_fish):
----------------------------
-Fish use a flocking algorithm with species-specific behaviors:
-
-Species A (Schooling):
-- Strong same-species attraction (form tight schools)
-- Weak attraction to other species
-- Moderate avoidance of collisions
-- Flee from sonar (moderate strength)
-
-Species B (Solitary):
-- No attraction to any fish
-- Strong collision avoidance
-- Very strong fleeing from sonar
-- Prefer to be alone
-
-Species C (Mixed):
-- Moderate attraction to all fish species
-- Standard collision avoidance  
-- Strong fleeing from sonar
-- Form loose mixed groups
-
-Flocking Forces:
-1. Avoidance: Repel from nearby fish (<0.8m) using inverse square law
-2. Attraction: Pull toward species group centroid (3m range)
-3. Sonar avoidance: Flee from robot (5m detection range)
-4. Perimeter preference: Drift toward cage outer edge (target 85% of radius)
-5. Random walk: Small Gaussian noise for natural motion
-
-Physics:
-- Forces combine into steering acceleration
-- Velocity limited to [min_speed, max_speed] (0.05 - 0.2 m/s)
-- Orientation follows velocity vector
-- Collisions with cage boundary reflect fish back inside
-
-Boundary Handling:
-- Fish stay within deformed cage (includes current deflection)
-- Calculates actual boundary position including current effects
-- Reflects velocity when hitting net
-
-DEBRIS BEHAVIOR (update_debris):
---------------------------------
-Simpler physics for floating debris:
-
-Forces:
-- Random turbulence: Small Brownian motion (0.008 m/s²)
-- Drift: Carried by current/turbulence
-
-Physics:
-- Velocity limited to max_speed (0.05 m/s)
-- Bounces off cage boundaries with reflection
-- No attraction/avoidance
-
-Boundary Handling:
-- Reflects velocity when hitting cage edge
-- Pushed slightly inside to prevent escape
-
-CAR BEHAVIOR (update_cars):
---------------------------
-Simple linear motion for vehicles:
-
-Physics:
-- Constant velocity (set during scene creation)
-- No steering or collision avoidance
-- Each car stays in its lane
-
-Boundary Handling:
-- Wraps around world edges (toroidal topology)
-- Cars appear on opposite side when exiting
-
-COORDINATE SPACES:
------------------
-All positions and velocities use world coordinates (meters):
-- Origin at world (0, 0)
-- Positive X: right
-- Positive Y: down (for fish cage) or along street
-
-The voxel_grid handles conversion to grid indices internally.
-
-PERFORMANCE:
------------
-Fish flocking is O(N²) for N fish, but optimized:
-- Only checks fish within 3m range
-- Early exit when distance too large
-- Uses squared distances (avoids sqrt)
-
-Typically <1ms for 50-100 fish on modern hardware.
-
-USAGE IN SCENES:
-----------------
-Scenes call update functions in their update_scene() method:
-
-    def update_scene(grid, scene_data, sonar_pos):
-        fish_data = scene_data['fish_data']
-        cage_center = scene_data['cage_center']
-        cage_radius = scene_data['cage_radius']
-        
-        # Update fish positions based on flocking behavior
-        update_fish(grid, fish_data, cage_center, cage_radius, sonar_pos)
-
-RELATIONSHIP TO OTHER MODULES:
------------------------------
-- voxel_grid.py: Uses clear/set methods to update grid
-- materials.py: Uses material definitions (FISH, DEBRIS, METAL)
-- scenes/*.py: Call update functions each frame
-- visualization.py: Triggers updates via animation loop
-
-EXTENDING:
-----------
-To add new dynamic object types:
-1. Create update_<type>() function following the pattern
-2. Add clear_<type>() method to VoxelGrid class
-3. Call from scene's update_scene() function
-4. Initialize objects in scene's create_scene() function
-
-Example:
-    def update_bubbles(grid, bubble_data):
-        grid.clear_bubbles()  # Remove old positions
-        for bubble in bubble_data:
-            bubble['pos'] += bubble['vel']  # Rise upward
-            bubble['vel'][1] -= 0.01  # Buoyancy
-            grid.set_circle(bubble['pos'], bubble['size'], BUBBLE)
+This module provides optimized update functions using spatial hashing
+to avoid O(N²) neighbor searches for fish flocking behavior.
 """
+
 import numpy as np
 from src.core.voxel_grid import VoxelGrid
 from src.core.materials import FISH, EMPTY
 
 
-def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_radius: float, sonar_pos: np.ndarray, dt: float = 0.1):
-    """Update fish positions and redraw them in the grid.
+class SpatialHash:
+    """Simple spatial hash for fast neighbor queries."""
+    
+    def __init__(self, cell_size=3.0):
+        """Initialize spatial hash.
+        
+        Args:
+            cell_size: Size of hash cells (should match interaction range)
+        """
+        self.cell_size = cell_size
+        self.hash_table = {}
+    
+    def _hash(self, pos):
+        """Convert position to cell coordinates."""
+        return (int(pos[0] / self.cell_size), int(pos[1] / self.cell_size))
+    
+    def insert(self, idx, pos):
+        """Insert object at position."""
+        cell = self._hash(pos)
+        if cell not in self.hash_table:
+            self.hash_table[cell] = []
+        self.hash_table[cell].append(idx)
+    
+    def query(self, pos):
+        """Get all objects in neighboring cells (includes current cell)."""
+        cx, cy = self._hash(pos)
+        neighbors = []
+        
+        # Check 3x3 grid of cells around query position
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                cell = (cx + dx, cy + dy)
+                if cell in self.hash_table:
+                    neighbors.extend(self.hash_table[cell])
+        
+        return neighbors
+
+
+def update_fish_optimized(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, 
+                         cage_radius: float, sonar_pos: np.ndarray, dt: float = 0.1):
+    """Optimized fish update using spatial hashing.
+    
+    Reduces complexity from O(N²) to O(N) for fish interactions.
     
     Args:
         grid: VoxelGrid to update
@@ -181,27 +59,32 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
         cage_center: Center of cage
         cage_radius: Radius of cage
         sonar_pos: Sonar position for avoidance behavior
-        dt: Time step in seconds (default: 0.1 for 10 FPS)
+        dt: Time step in seconds
     """
     # Clear existing fish
     grid.clear_fish()
     
-    # Species behavior parameters
-    # A: Schooling (strong same-species attraction)
-    # B: Solitary (avoid all fish)
-    # C: Mixed (moderate attraction to all)
+    if len(fish_data) == 0:
+        return
+    
+    # Species behavior parameters (reduced for more exploration)
     behavior = {
-        'A': {'same_attract': 2.0, 'other_attract': 0.1, 'avoid': 0.8, 'sonar_avoid': 1.0},
-        'B': {'same_attract': 0.0, 'other_attract': 0.0, 'avoid': 2.0, 'sonar_avoid': 2.5},
-        'C': {'same_attract': 0.8, 'other_attract': 0.6, 'avoid': 1.0, 'sonar_avoid': 1.8}
+        'A': {'same_attract': 0.5, 'other_attract': 0.05, 'avoid': 0.3, 'sonar_avoid': 0.8},
+        'B': {'same_attract': 0.0, 'other_attract': 0.0, 'avoid': 0.8, 'sonar_avoid': 1.5},
+        'C': {'same_attract': 0.3, 'other_attract': 0.2, 'avoid': 0.4, 'sonar_avoid': 1.2}
     }
     
-    # Update each fish
+    # Build spatial hash for current positions
+    spatial_hash = SpatialHash(cell_size=3.0)
     for i, fish in enumerate(fish_data):
-        # Update position (apply dt to velocity)
+        spatial_hash.insert(i, fish['pos'])
+    
+    # Update each fish using spatial hash
+    for i, fish in enumerate(fish_data):
+        # Update position
         fish['pos'] += fish['vel'] * dt
         
-        # Flocking behavior (computed every frame for responsiveness)
+        # Flocking behavior using spatial hash
         species = fish['species']
         avoid_vec = np.zeros(2)
         same_attract_vec = np.zeros(2)
@@ -209,27 +92,31 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
         same_count = 0
         other_count = 0
         
-        # Check nearby fish (within 3m for efficiency)
-        for j, other in enumerate(fish_data):
+        # Query only nearby fish using spatial hash
+        nearby_indices = spatial_hash.query(fish['pos'])
+        
+        for j in nearby_indices:
             if i == j:
                 continue
             
+            other = fish_data[j]
             diff = other['pos'] - fish['pos']
-            dist = np.linalg.norm(diff)
+            dist_sq = diff[0]*diff[0] + diff[1]*diff[1]  # Avoid sqrt
             
-            if dist < 3.0 and dist > 0.01:
+            if dist_sq < 9.0 and dist_sq > 0.0001:  # 3.0m range
+                dist = np.sqrt(dist_sq)
+                
                 # Avoidance (short range)
-                if dist < 0.8:
-                    avoid_vec -= diff / (dist * dist + 0.1)
+                if dist_sq < 0.64:  # 0.8m
+                    avoid_vec -= diff / (dist_sq + 0.1)
                 
                 # Attraction (medium range)
-                if dist < 3.0:
-                    if other['species'] == species:
-                        same_attract_vec += diff / (dist + 0.1)
-                        same_count += 1
-                    else:
-                        other_attract_vec += diff / (dist + 0.1)
-                        other_count += 1
+                if other['species'] == species:
+                    same_attract_vec += diff / (dist + 0.1)
+                    same_count += 1
+                else:
+                    other_attract_vec += diff / (dist + 0.1)
+                    other_count += 1
         
         # Apply behaviors based on species
         params = behavior[species]
@@ -241,147 +128,110 @@ def update_fish(grid: VoxelGrid, fish_data: list, cage_center: np.ndarray, cage_
             steer += params['other_attract'] * other_attract_vec / other_count
         steer += params['avoid'] * avoid_vec
         
-        # SONAR AVOIDANCE: Fish flee from the robot/sonar
+        # Sonar avoidance
         diff_from_sonar = fish['pos'] - sonar_pos
-        dist_from_sonar = np.linalg.norm(diff_from_sonar)
+        dist_sq_sonar = diff_from_sonar[0]**2 + diff_from_sonar[1]**2
         
-        if dist_from_sonar < 5.0 and dist_from_sonar > 0.01:  # Within 5m detection range
-            # Flee away from sonar with inverse square law
-            flee_strength = params['sonar_avoid'] / (dist_from_sonar**2 + 0.5)
-            steer += flee_strength * diff_from_sonar / dist_from_sonar
+        if dist_sq_sonar < 25.0 and dist_sq_sonar > 0.0001:  # 5m range
+            dist_sonar = np.sqrt(dist_sq_sonar)
+            flee_strength = params['sonar_avoid'] / (dist_sq_sonar + 0.5)
+            steer += flee_strength * diff_from_sonar / dist_sonar
         
-        # PERIMETER PREFERENCE: Fish naturally want to swim toward outer net area
-        # This simulates fish preferring to be near the net structure
-        dx = fish['pos'][0] - cage_center[0]
-        dy = fish['pos'][1] - cage_center[1]
-        dist_from_center = np.sqrt(dx*dx + dy*dy)
+        # Random exploration component (increased for more movement)
+        steer += (np.random.rand(2) - 0.5) * 0.4 * (dt * 10)
         
-        # Target the outer perimeter (0.85 of radius - close but not at the net)
-        target_radius = cage_radius * 0.85
-        if dist_from_center > 0.01:
-            # If too far inside, gently push toward perimeter
-            if dist_from_center < target_radius * 0.7:
-                to_perimeter = np.array([dx, dy]) / dist_from_center
-                # Gentle attraction to outer area (0.4 strength)
-                steer += to_perimeter * 0.4
-        
-        # Add small random component (scaled by dt for frame-rate independence)
-        steer += (np.random.rand(2) - 0.5) * 0.1 * (dt * 10)  # Reduced and time-scaled
-        
-        # Apply steering with momentum (scaled by dt)
+        # Apply steering (increased responsiveness)
         if np.linalg.norm(steer) > 0.01:
-            fish['vel'] += steer * 0.02 * (dt * 10)  # Reduced and time-scaled
+            fish['vel'] += steer * 0.05 * (dt * 10)
             
-            # Limit speed (reduced for smoother, more realistic movement)
-            speed = np.linalg.norm(fish['vel'])
-            max_speed = 0.15  # Reduced from 0.2 for gentler movement
-            min_speed = 0.03  # Reduced from 0.05 for slower cruising
-            if speed > max_speed:
+            # Limit speed (increased for more movement)
+            speed_sq = fish['vel'][0]**2 + fish['vel'][1]**2
+            max_speed = 0.35
+            min_speed = 0.08
+            
+            if speed_sq > max_speed * max_speed:
+                speed = np.sqrt(speed_sq)
                 fish['vel'] = fish['vel'] / speed * max_speed
-            elif speed < min_speed:
+            elif speed_sq < min_speed * min_speed and speed_sq > 0.0001:
+                speed = np.sqrt(speed_sq)
                 fish['vel'] = fish['vel'] / speed * min_speed
-            
-            # Update orientation
+        
+        # Update orientation
+        if np.linalg.norm(fish['vel']) > 0.01:
             fish['orientation'] = np.arctan2(fish['vel'][1], fish['vel'][0])
         
-        # Keep fish inside stretched cage bounds (matching current deflection)
-        # Calculate what the boundary position should be at this fish's angle
-        angle = np.arctan2(dy, dx)
+        # Boundary collision (cage perimeter)
+        from src.config import SCENE_CONFIG
+        current_strength = SCENE_CONFIG['current_strength']
+        current_direction = np.array(SCENE_CONFIG['current_direction'])
         
-        # Calculate deflected boundary at this angle (matching net deflection)
-        boundary_x_base = cage_center[0] + cage_radius * np.cos(angle)
-        boundary_y_base = cage_center[1] + cage_radius * np.sin(angle)
+        dx = fish['pos'][0] - cage_center[0]
+        dy = fish['pos'][1] - cage_center[1]
         
-        # Apply same current deflection as net
-        current_direction = np.array([0.0, 1.0])  # Southward
-        current_strength = 6.5
-        deflection = current_strength * max(0, (boundary_y_base - cage_center[1]) / cage_radius) * current_direction
-        lateral_factor = np.sin(angle) * 0.4
-        deflection += np.array([lateral_factor * current_strength * 0.3, 0])
+        # Calculate deflection based on vertical position
+        deflection_factor = max(0, dy / cage_radius) if cage_radius > 0 else 0
+        deflection = current_strength * deflection_factor * current_direction
+        lateral_deflection = np.sin(np.arctan2(dy, dx)) * 0.4 * current_strength * 0.3
+        deflection += np.array([lateral_deflection, 0])
         
-        boundary_x = boundary_x_base + deflection[0]
-        boundary_y = boundary_y_base + deflection[1]
+        # Actual boundary position
+        actual_boundary = cage_radius
+        distance_to_center = np.sqrt(dx*dx + dy*dy)
         
-        # Check if fish is outside deflected boundary
-        dx_to_boundary = fish['pos'][0] - boundary_x
-        dy_to_boundary = fish['pos'][1] - boundary_y
-        # Check if fish is beyond boundary in the radial direction
-        if dx_to_boundary * dx > 0 or dy_to_boundary * dy > 0:
-            if dist_from_center > cage_radius - 1.0:
-                # Bounce back toward cage center
-                angle_to_center = np.arctan2(-dy, -dx)
-                swim_speed = np.linalg.norm(fish['vel'])
-                fish['vel'][0] = swim_speed * np.cos(angle_to_center)
-                fish['vel'][1] = swim_speed * np.sin(angle_to_center)
-                fish['orientation'] = angle_to_center
-        
-        # Draw fish at new position
-        grid.set_ellipse(fish['pos'], fish['radii'], fish['orientation'], FISH)
+        if distance_to_center > actual_boundary - 0.3:
+            normal = np.array([dx, dy]) / (distance_to_center + 0.0001)
+            fish['vel'] -= 2 * np.dot(fish['vel'], normal) * normal
+            fish['pos'] = cage_center + normal * (actual_boundary - 0.35)
+    
+    # Redraw all fish
+    for fish in fish_data:
+        grid.set_ellipse(
+            fish['pos'],
+            fish['radii'],
+            fish['orientation'],
+            FISH
+        )
 
 
-def update_debris(grid: VoxelGrid, debris_data: list, cage_center: np.ndarray, cage_radius: float, dt: float = 0.1):
-    """Update debris positions and redraw them in the grid.
+def update_debris_optimized(grid: VoxelGrid, debris_data: list, cage_center: np.ndarray, 
+                           cage_radius: float, dt: float = 0.1):
+    """Optimized debris update (already O(N), just cleaned up).
     
     Args:
-        dt: Time step in seconds (default: 0.1 for 10 FPS)
+        grid: VoxelGrid to update
+        debris_data: List of debris dictionaries
+        cage_center: Center of cage
+        cage_radius: Radius of cage
+        dt: Time step in seconds
     """
-    # Clear existing debris
     grid.clear_debris()
     
-    # Update each debris piece
+    if len(debris_data) == 0:
+        return
+    
+    max_speed = 0.05
+    
     for debris in debris_data:
-        # Add random turbulence/drift
-        turbulence = (np.random.rand(2) - 0.5) * 0.008  # Small random drift
-        debris['vel'] += turbulence
+        # Random turbulence/drift
+        debris['vel'] += (np.random.rand(2) - 0.5) * 0.008 * (dt * 10)
         
-        # Limit drift speed
+        # Update position
+        debris['pos'] += debris['vel'] * dt
+        
+        # Limit speed
         speed = np.linalg.norm(debris['vel'])
-        max_speed = 0.05
         if speed > max_speed:
             debris['vel'] = debris['vel'] / speed * max_speed
         
-        # Update position with time step
-        debris['pos'] += debris['vel'] * dt
-        
-        # Keep debris inside cage bounds (bounce off walls)
+        # Boundary collision (simple reflection)
         dx = debris['pos'][0] - cage_center[0]
         dy = debris['pos'][1] - cage_center[1]
-        dist_from_center = np.sqrt(dx*dx + dy*dy)
+        distance_to_center = np.sqrt(dx*dx + dy*dy)
         
-        if dist_from_center > cage_radius - 0.5:
-            # Reflect velocity off wall
-            normal = np.array([dx, dy]) / (dist_from_center + 0.001)
-            debris['vel'] = debris['vel'] - 2 * np.dot(debris['vel'], normal) * normal
-            # Also push back inside slightly
-            debris['pos'] = cage_center + normal * (cage_radius - 0.5)
+        if distance_to_center > cage_radius - debris['size']:
+            normal = np.array([dx, dy]) / (distance_to_center + 0.0001)
+            debris['vel'] -= 2 * np.dot(debris['vel'], normal) * normal
+            debris['pos'] = cage_center + normal * (cage_radius - debris['size'] - 0.1)
         
-        # Draw debris at new position
+        # Redraw
         grid.set_circle(debris['pos'], debris['size'], debris['material'])
-
-
-def update_cars(grid: VoxelGrid, car_data: list, dt: float = 0.1):
-    """Update car positions and redraw them in the grid.
-    
-    Args:
-        dt: Time step in seconds (default: 0.1 for 10 FPS)
-    """
-    # Clear existing cars
-    grid.clear_cars()
-    
-    # Update each car
-    for car in car_data:
-        # Update position with time step
-        car['pos'] += car['vel'] * dt
-        
-        # Wrap around at world boundaries (cars loop around)
-        if car['pos'][0] < 0:
-            car['pos'][0] += world_size
-        elif car['pos'][0] > world_size:
-            car['pos'][0] -= world_size
-        
-        # Draw car at new position
-        grid.set_box(
-            np.array([car['pos'][0] - car['length']/2, car['pos'][1] - car['width']/2]),
-            np.array([car['pos'][0] + car['length']/2, car['pos'][1] + car['width']/2]),
-            car['material']
-        )

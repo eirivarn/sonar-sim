@@ -296,7 +296,10 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
             return
         
         from src.scripts.data_collection import get_path_generator
+        from src.config import VISUALIZATION_CONFIG
         import json
+        
+        dt = VISUALIZATION_CONFIG['dt']
         
         print(f"\n{'='*60}")
         print(f"HEADLESS DATA COLLECTION MODE")
@@ -324,13 +327,20 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
         
         # Collect data at each position
         frame_counter = {'count': 0}
+        
+        # Determine if we need scene updates (for dynamic objects with continuous motion)
+        # Random/grid sampling: fish positions are independent snapshots (no updates needed)
+        # Circular/spiral: continuous motion, update scene for smooth fish movement
+        update_scene_each_frame = collect_mode in ['circular', 'spiral']
+        
         for i, (pos, direction) in enumerate(path_gen):
             # Update sonar position
             sonar.position = pos.copy()
             sonar.direction = direction.copy()
             
-            # Update scene (for dynamic objects)
-            scene_module.update_scene(grid, dynamic_objects, sonar.position)
+            # Update scene only if needed (continuous motion paths)
+            if update_scene_each_frame:
+                scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
             
             # Perform scan
             sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
