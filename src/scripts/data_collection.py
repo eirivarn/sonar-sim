@@ -397,43 +397,59 @@ def get_path_generator(path_type, scene_config, num_samples=100, seed=None, **kw
             center = [world_size / 2, world_size / 2]
             radius = world_size * 0.3
         
+        # Filter kwargs to only include CircularPath parameters
+        circular_kwargs = {k: v for k, v in kwargs.items() 
+                          if k in ['radius_variation', 'orientation_mode', 'orientation_noise_deg', 'dt']}
+        
         return CircularPath(
             center=center,
             radius=radius,
             num_samples=num_samples,
             seed=seed,
-            **kwargs
+            **circular_kwargs
         )
     
     elif path_type == 'grid':
         margin = world_size * 0.1
+        # Filter kwargs to only include GridPath parameters
+        grid_kwargs = {k: v for k, v in kwargs.items() 
+                      if k in ['direction_mode', 'fixed_direction']}
+        
         return GridPath(
             min_pos=[margin, margin],
             max_pos=[world_size - margin, world_size - margin],
             grid_size=[int(np.sqrt(num_samples)), int(np.sqrt(num_samples))],
             seed=seed,
-            **kwargs
+            **grid_kwargs
         )
     
     elif path_type == 'random':
         margin = world_size * 0.1
+        # Filter kwargs to only include RandomPath parameters
+        random_kwargs = {k: v for k, v in kwargs.items() 
+                        if k in ['direction_mode']}
+        
         return RandomPath(
             min_pos=[margin, margin],
             max_pos=[world_size - margin, world_size - margin],
             num_samples=num_samples,
             seed=seed,
-            **kwargs
+            **random_kwargs
         )
     
     elif path_type == 'spiral':
         center = [world_size / 2, world_size / 2]
+        # Filter kwargs to only include SpiralPath parameters
+        spiral_kwargs = {k: v for k, v in kwargs.items() 
+                        if k in ['orientation_mode']}
+        
         return SpiralPath(
             center=center,
             start_radius=2.0,
             end_radius=world_size * 0.4,
             num_samples=num_samples,
             seed=seed,
-            **kwargs
+            **spiral_kwargs
         )
     
     else:
