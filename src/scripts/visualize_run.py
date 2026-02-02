@@ -149,82 +149,97 @@ def create_visualization(frame_data, run_config, material_colors=None):
     world_size = run_config.get('world_size', 30.0)
     
     ax_map.set_xlim(0, world_size)
-    ax_map.set_ylim(world_size, 0)  # Inverted Y
+    ax_map.set_ylim(0, world_size)  # Normal Y axis (not inverted)
     ax_map.set_aspect('equal')
     ax_map.set_title('World Map')
     ax_map.set_xlabel('X (m)')
     ax_map.set_ylabel('Y (m)')
     ax_map.grid(True, alpha=0.3)
     
-    # Draw scene if available
+    # Use actual scene rendering if available
     if scene_snapshot:
         scene_type = scene_snapshot.get('scene_type', '')
+        scene_path = scene_snapshot.get('scene_path', '')
         
-        if scene_type == 'fish_cage':
-            # Import config to get cage parameters
+        # Try to import and use actual scene module
+        try:
+            import importlib
             import sys
             from pathlib import Path as P
-            sys.path.insert(0, str(P(__file__).parent))
-            from src.config import SCENE_CONFIG
+            sys.path.insert(0, str(P(__file__).parent.parent.parent))
             
-            # Draw cage outline (12-sided polygon)
-            cage_center = np.array(SCENE_CONFIG['cage_center'])
-            cage_radius = SCENE_CONFIG['cage_radius']
-            num_sides = SCENE_CONFIG.get('num_sides', 12)
+            scene_module = importlib.import_module(scene_path)
             
-            # Create polygon vertices
-            angles = np.linspace(0, 2*np.pi, num_sides + 1)
-            polygon_x = cage_center[0] + cage_radius * np.cos(angles)
-            polygon_y = cage_center[1] + cage_radius * np.sin(angles)
+            # Create a minimal scene_data dict for render_map
+            scene_data = {
+                'fish_data': [],
+                'debris_data': []
+            }
             
-            # Draw cage outline
-            ax_map.plot(polygon_x, polygon_y, 'b-', linewidth=2, label='Cage Net')
+            # Add fish from metadata if available
+            if 'metadata' in frame_data:
+                metadata = frame_data['metadata']
+                if 'fish_positions' in metadata and 'fish_species' in metadata:
+                    fish_positions = metadata['fish_positions']
+                    fish_species = metadata['fish_species']
+                    
+                    for pos, species in zip(fish_positions, fish_species):
+                        scene_data['fish_data'].append({
+                            'pos': np.array(pos),
+                            'species': species
+                        })
             
-            # Draw individual panels (slightly lighter)
-            for i in range(num_sides):
-                ax_map.plot([polygon_x[i], polygon_x[i+1]], 
-                           [polygon_y[i], polygon_y[i+1]], 
-                           'b-', linewidth=1.5, alpha=0.7)
+            # Create minimal sonar object for render_map
+            class MinimalSonar:
+                def __init__(self, position, direction):
+                    self.position = np.array(position)
+                    self.direction = np.array(direction)
             
-            # Draw dynamic objects if in metadata
-            if 'metadata' in frame_data and 'dynamic_objects' in frame_data['metadata']:
-                fish_data = frame_data['metadata']['dynamic_objects'].get('fish_data', [])
-                if fish_data:
-                    fish_pos = np.array([[f['pos'][0], f['pos'][1]] for f in fish_data])
-                    ax_map.scatter(fish_pos[:, 0], fish_pos[:, 1], 
-                                 c='orange', s=3, alpha=0.6, label='Fish')
-        
-        elif scene_type == 'street':
-            # Import config for street parameters
-            import sys
-            from pathlib import Path as P
-            sys.path.insert(0, str(P(__file__).parent))
-            from src.config import STREET_SCENE_CONFIG
+            if 'metadata' in frame_data:
+                sonar = MinimalSonar(
+                    frame_data['metadata']['sonar_position'],
+                    frame_data['metadata']['sonar_direction']
+                )
+            else:
+                sonar = MinimalSonar([15.0, 15.0], [1.0, 0.0])
             
-            # Draw street
-            street_width = STREET_SCENE_CONFIG['street_width']
-            street_center = world_size / 2
-            street_rect = plt.Rectangle(
-                [0, street_center - street_width/2], 
-                world_size, street_width,
-                facecolor='gray', alpha=0.5, label='Street'
-            )
-            ax_map.add_patch(street_rect)
+            # Use the scene's actual render_map function
+            scene_module.render_map(ax_map, scene_data, sonar)
+            
+        except Exception as e:
+            # Fallback to simple rendering if scene module unavailable
+            print(f"Warning: Could not use scene render_map: {e}")
+            # Simple fallback rendering
+            if 'metadata' in frame_data and 'fish_positions' in frame_data['metadata']:
+                fish_positions = frame_data['metadata']['fish_positions']
+                fish_species = frame_data['metadata']['fish_species']
+                species_colors = {'A': 'orange', 'B': 'green', 'C': 'purple'}
+                for pos, species in zip(fish_positions, fish_species):
+                    color = species_colors.get(species, 'gray')
+                    ax_map.plot(pos[0], pos[1], 'o', color=color, markersize=3)
     
-    # Draw sonar position and FOV
+    # Draw sonar as oriented ellipse
     if 'metadata' in frame_data:
         pos = frame_data['metadata']['sonar_position']
         direction = frame_data['metadata']['sonar_direction']
         fov_deg = frame_data['metadata'].get('fov_deg', 120.0)
         range_m = frame_data['metadata'].get('range_m', 20.0)
         
-        # Sonar position
-        ax_map.scatter(pos[0], pos[1], c='red', s=100, marker='^', 
-                      label='Sonar', zorder=5)
-        
-        # Direction arrow
-        ax_map.arrow(pos[0], pos[1], direction[0]*2, direction[1]*2,
-                    head_width=0.5, head_length=0.3, fc='red', ec='red', zorder=5)
+        # Draw sonar as oriented ellipse (robot body)
+        from matplotlib.patches import Ellipse
+        sonar_angle = np.arctan2(direction[1], direction[0])
+        sonar_ellipse = Ellipse(
+            xy=(pos[0], pos[1]),
+            width=1.5,  # Length along direction
+            height=0.8,  # Width perpendicular to direction
+            angle=np.degrees(sonar_angle),
+            facecolor='red',
+            edgecolor='darkred',
+            linewidth=2,
+            alpha=0.7,
+            zorder=5
+        )
+        ax_map.add_patch(sonar_ellipse)
         
         # FOV cone
         fov_rad = np.deg2rad(fov_deg)

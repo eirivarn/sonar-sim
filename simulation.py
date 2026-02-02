@@ -261,6 +261,10 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
         
         # Serialize dynamic objects (convert numpy arrays to lists)
         for key, value in dynamic_objects.items():
+            # Skip static_cache (large arrays, not needed for snapshot)
+            if key == 'static_cache':
+                continue
+                
             if isinstance(value, list):
                 # List of objects (fish, cars, etc.)
                 serialized = []
@@ -295,7 +299,6 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
             print("Error: --save is required when using --collect mode")
             return
         
-        from src.scripts.data_collection import get_path_generator
         from src.config import VISUALIZATION_CONFIG
         import json
         
@@ -304,76 +307,198 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
         print(f"\n{'='*60}")
         print(f"HEADLESS DATA COLLECTION MODE")
         print(f"{'='*60}")
-        print(f"Path type: {collect_mode}")
-        print(f"Samples: {num_samples}")
+        print(f"Collection type: {collect_mode}")
+        print(f"Target samples: {num_samples}")
         print(f"Scene: {scene_type}")
         print(f"Save directory: {save_dir}")
         print(f"{'='*60}\n")
         
-        # Generate path
-        if path_kwargs is None:
-            path_kwargs = {}
-        path_gen = get_path_generator(collect_mode, scene_config, num_samples=num_samples, **path_kwargs)
+        # Determine collection strategy
+        if collect_mode == 'random':
+            # Random exploration mode: Robot wanders randomly, capturing frames periodically
+            print("Mode: Random exploration with robot physics")
+            print("Robot will move randomly through the world, capturing frames as it goes\n")
+            
+            frame_counter = {'count': 0}
+            # More robot updates per capture for better movement coverage
+            robot_updates_per_capture = 15
+            
+            # Get cage boundaries from SCENE_CONFIG (for fish_cage_scene)
+            from src.config import SCENE_CONFIG
+            cage_center = np.array(SCENE_CONFIG['cage_center'])
+            cage_radius = SCENE_CONFIG['cage_radius']
+            safe_radius = cage_radius - 2.0  # Stay 2m away from nets
+            
+            # Wandering state
+            current_forward = 0.6
+            current_yaw_rate = 0.0
+            wander_timer = 0
+            
+            # Random movement loop
+            for sample_idx in range(num_samples):
+                # Run several robot physics updates to get meaningful movement
+                for update_idx in range(robot_updates_per_capture):
+                    # Update wander behavior every few steps
+                    if wander_timer <= 0:
+                        # Change direction slightly
+                        current_yaw_rate += np.random.uniform(-0.4, 0.4)
+                        current_yaw_rate = np.clip(current_yaw_rate, -0.8, 0.8)
+                        # Vary speed slightly
+                        current_forward += np.random.uniform(-0.2, 0.2)
+                        current_forward = np.clip(current_forward, 0.4, 0.9)
+                        # Reset timer
+                        wander_timer = np.random.randint(3, 8)
+                    
+                    wander_timer -= 1
+                    
+                    # Check distance from center
+                    robot_state = robot.get_state()
+                    robot_pos = robot_state['position']
+                    dist_from_center = np.linalg.norm(robot_pos - cage_center)
+                    
+                    # If getting close to boundary, turn toward center
+                    if dist_from_center > safe_radius * 0.8:
+                        # Calculate angle to center
+                        to_center = cage_center - robot_pos
+                        angle_to_center = np.arctan2(to_center[1], to_center[0])
+                        angle_diff = angle_to_center - robot.yaw
+                        # Normalize angle difference to [-pi, pi]
+                        while angle_diff > np.pi:
+                            angle_diff -= 2 * np.pi
+                        while angle_diff < -np.pi:
+                            angle_diff += 2 * np.pi
+                        
+                        # Steer toward center
+                        current_yaw_rate = np.clip(angle_diff * 0.8, -1.0, 1.0)
+                    
+                    # Apply thrust commands
+                    robot.set_thrust(
+                        forward=current_forward,
+                        lateral=np.random.uniform(-0.15, 0.15),  # Small random drift
+                        yaw_rate=current_yaw_rate
+                    )
+                    
+                    robot.update(dt)
+                
+                # Update sonar to follow robot
+                robot_state = robot.get_state()
+                sonar.position = robot_state['position'].copy()
+                sonar.direction = robot_state['direction'].copy()
+                
+                # Update scene once per capture (fish move forward in time)
+                # Use larger time step for scene to speed up: robot_updates * dt
+                scene_dt = robot_updates_per_capture * dt
+                scene_module.update_scene(grid, dynamic_objects, sonar.position, scene_dt)
+                # Update scene once per capture (fish move forward in time)
+                # Use larger time step for scene to speed up: robot_updates * dt
+                scene_dt = robot_updates_per_capture * dt
+                scene_module.update_scene(grid, dynamic_objects, sonar.position, scene_dt)
+                
+                # Perform scan
+                sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
+                
+                # Save data
+                frame_num = frame_counter['count']
+                
+                # Save sonar image
+                sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
+                np.save(sonar_path, sonar_image)
+                
+                # Save ground truth
+                gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
+                np.save(gt_path, ground_truth)
+                
+                # Save metadata including current fish positions
+                metadata = {
+                    'frame': frame_num,
+                    'sonar_position': sonar.position.tolist(),
+                    'sonar_direction': sonar.direction.tolist(),
+                    'range_m': sonar.range_m,
+                    'fov_deg': sonar.fov_deg,
+                    'fish_positions': [fish['pos'].tolist() for fish in dynamic_objects['fish_data']],
+                    'fish_species': [fish['species'] for fish in dynamic_objects['fish_data']],
+                }
+                meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
+                with open(meta_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                frame_counter['count'] += 1
+                
+                # Progress update
+                if (frame_num + 1) % max(1, num_samples // 10) == 0:
+                    progress = 100 * (frame_num + 1) / num_samples
+                    print(f"Progress: {frame_num+1}/{num_samples} ({progress:.1f}%) - Position: {sonar.position}")
         
-        # Save path configuration
-        path_config = {
-            'path_type': collect_mode,
-            'num_samples': num_samples,
-            'path_kwargs': path_kwargs,
-            'positions': [(pos.tolist(), direction.tolist()) for pos, direction in path_gen]
-        }
-        with open(save_dir / 'path_config.json', 'w') as f:
-            json.dump(path_config, f, indent=2)
-        
-        # Collect data at each position
-        frame_counter = {'count': 0}
-        
-        # Determine if we need scene updates (for dynamic objects with continuous motion)
-        # Random/grid sampling: fish positions are independent snapshots (no updates needed)
-        # Circular/spiral: continuous motion, update scene for smooth fish movement
-        update_scene_each_frame = collect_mode in ['circular', 'spiral']
-        
-        for i, (pos, direction) in enumerate(path_gen):
-            # Update sonar position
-            sonar.position = pos.copy()
-            sonar.direction = direction.copy()
+        else:
+            # Path-based collection (circular, spiral, grid)
+            from src.scripts.data_collection import get_path_generator
             
-            # Update scene only if needed (continuous motion paths)
-            if update_scene_each_frame:
-                scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
+            print(f"Mode: Path-based collection ({collect_mode})")
+            print("Using pre-defined path with robot teleportation\n")
             
-            # Perform scan
-            sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
+            # Generate path
+            if path_kwargs is None:
+                path_kwargs = {}
+            path_gen = get_path_generator(collect_mode, scene_config, num_samples=num_samples, **path_kwargs)
             
-            # Save data
-            frame_num = frame_counter['count']
+            # Convert to list to allow multiple iterations
+            path_list = [(pos, direction) for pos, direction in path_gen]
             
-            # Save sonar image
-            sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
-            np.save(sonar_path, sonar_image)
-            
-            # Save ground truth
-            gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
-            np.save(gt_path, ground_truth)
-            
-            # Save metadata
-            metadata = {
-                'frame': frame_num,
-                'sonar_position': sonar.position.tolist(),
-                'sonar_direction': sonar.direction.tolist(),
-                'range_m': sonar.range_m,
-                'fov_deg': sonar.fov_deg,
+            # Save path configuration
+            path_config = {
+                'path_type': collect_mode,
+                'num_samples': num_samples,
+                'path_kwargs': path_kwargs,
+                'positions': [(pos.tolist(), direction.tolist()) for pos, direction in path_list]
             }
-            meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
-            with open(meta_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
+            with open(save_dir / 'path_config.json', 'w') as f:
+                json.dump(path_config, f, indent=2)
             
-            frame_counter['count'] += 1
+            # Collect data at each position
+            frame_counter = {'count': 0}
             
-            # Progress update
-            if (i + 1) % max(1, num_samples // 10) == 0:
-                progress = 100 * (i + 1) / num_samples
-                print(f"Progress: {i+1}/{num_samples} ({progress:.1f}%) - Position: {pos}")
+            for i, (pos, direction) in enumerate(path_list):
+                # Teleport sonar to path position
+                sonar.position = pos.copy()
+                sonar.direction = direction.copy()
+                
+                # Update scene (fish continue moving in the same world)
+                scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
+                
+                # Perform scan
+                sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
+                
+                # Save data
+                frame_num = frame_counter['count']
+                
+                # Save sonar image
+                sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
+                np.save(sonar_path, sonar_image)
+                
+                # Save ground truth
+                gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
+                np.save(gt_path, ground_truth)
+                
+                # Save metadata including current fish positions
+                metadata = {
+                    'frame': frame_num,
+                    'sonar_position': sonar.position.tolist(),
+                    'sonar_direction': sonar.direction.tolist(),
+                    'range_m': sonar.range_m,
+                    'fov_deg': sonar.fov_deg,
+                    'fish_positions': [fish['pos'].tolist() for fish in dynamic_objects['fish_data']],
+                    'fish_species': [fish['species'] for fish in dynamic_objects['fish_data']],
+                }
+                meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
+                with open(meta_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                frame_counter['count'] += 1
+                
+                # Progress update
+                if (i + 1) % max(1, num_samples // 10) == 0:
+                    progress = 100 * (i + 1) / num_samples
+                    print(f"Progress: {i+1}/{num_samples} ({progress:.1f}%) - Position: {pos}")
         
         print(f"\n{'='*60}")
         print(f"Data collection complete!")
