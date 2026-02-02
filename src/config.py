@@ -128,9 +128,10 @@ DATA_COLLECTION_CONFIG = {
     # Circular path smooth variation (uses multiple sine waves)
     # Distance variation: r = base_radius + sum(sin(angle * freq) * amp) * radius_variation
     'radius_sine_waves': [
-        {'frequency': 3.0, 'amplitude': 0.4},    # Main in/out pattern
-        {'frequency': 7.0, 'amplitude': 0.3},    # High frequency detail
-        {'frequency': 1.5, 'amplitude': 0.3},    # Slow drift
+        {'frequency': 3.0, 'amplitude': 0.7},    # Main in/out pattern
+        {'frequency': 7.0, 'amplitude': 0.5},    # High frequency detail
+        {'frequency': 1.5, 'amplitude': 0.6},    # Slow drift
+        {'frequency': 11.0, 'amplitude': 0.4},   # Even higher frequency variation
     ],
     
     # Orientation variation: angle_offset = sum(sin(angle * freq + phase) * amp) * orientation_noise

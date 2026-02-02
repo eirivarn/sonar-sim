@@ -389,10 +389,6 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
                 # Use larger time step for scene to speed up: robot_updates * dt
                 scene_dt = robot_updates_per_capture * dt
                 scene_module.update_scene(grid, dynamic_objects, sonar.position, scene_dt)
-                # Update scene once per capture (fish move forward in time)
-                # Use larger time step for scene to speed up: robot_updates * dt
-                scene_dt = robot_updates_per_capture * dt
-                scene_module.update_scene(grid, dynamic_objects, sonar.position, scene_dt)
                 
                 # Perform scan
                 sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
@@ -400,7 +396,15 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
                 # Save data
                 frame_num = frame_counter['count']
                 
-                # Save sonar image
+                # ROS-compatible timestamp (seconds since epoch)
+                import time
+                timestamp = time.time()
+                
+                # Verify sonar image is float32 and shape is (1024, 256)
+                sonar_image = sonar_image.astype(np.float32)
+                assert sonar_image.shape == (1024, 256), f"Expected (1024, 256), got {sonar_image.shape}"
+                
+                # Save sonar image as raw float32 array
                 sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
                 np.save(sonar_path, sonar_image)
                 
@@ -408,13 +412,18 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
                 gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
                 np.save(gt_path, ground_truth)
                 
-                # Save metadata including current fish positions
+                # Save metadata in ROS-compatible format
                 metadata = {
                     'frame': frame_num,
+                    't': timestamp,  # UTC timestamp in seconds (ROS format)
+                    'dim_sizes': [1024, 256],  # [range_bins, beams] matching ROS
+                    'dim_labels': ['range', 'beam'],  # ROS dimension labels
                     'sonar_position': sonar.position.tolist(),
                     'sonar_direction': sonar.direction.tolist(),
                     'range_m': sonar.range_m,
                     'fov_deg': sonar.fov_deg,
+                    'data_shape': list(sonar_image.shape),  # Explicit shape info
+                    'data_dtype': str(sonar_image.dtype),  # float32
                     'fish_positions': [fish['pos'].tolist() for fish in dynamic_objects['fish_data']],
                     'fish_species': [fish['species'] for fish in dynamic_objects['fish_data']],
                 }
@@ -549,12 +558,12 @@ if __name__ == '__main__':
                        help='Run headless data collection with specified path type (requires --save)')
     parser.add_argument('--num-samples', type=int, default=100,
                        help='Number of samples to collect in headless mode (default: 100)')
-    parser.add_argument('--radius-variation', type=float, default=1.0,
-                       help='Radius variation for circular path (default: 1.0)')
+    parser.add_argument('--radius-variation', type=float, default=3.5,
+                       help='Radius variation for circular path (default: 3.5)')
     parser.add_argument('--orientation-mode', type=str, choices=['inward', 'tangent', 'outward', 'mixed'], 
-                       default='inward', help='Orientation mode for circular path (default: inward)')
-    parser.add_argument('--orientation-noise', type=float, default=15.0,
-                       help='Orientation noise in degrees for circular path (default: 15.0)')
+                       default='outward', help='Orientation mode for circular path (default: outward)')
+    parser.add_argument('--orientation-noise', type=float, default=35.0,
+                       help='Orientation noise in degrees for circular path (default: 35.0)')
     parser.add_argument('--profile', action='store_true',
                        help='Enable performance profiling and show report on exit')
     

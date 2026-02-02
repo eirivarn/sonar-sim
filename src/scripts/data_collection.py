@@ -391,7 +391,7 @@ def get_path_generator(path_type, scene_config, num_samples=100, seed=None, **kw
         if scene_type == 'fish_cage':
             from src.config import SCENE_CONFIG
             center = SCENE_CONFIG['cage_center']
-            radius = SCENE_CONFIG['cage_radius'] * 0.7  # Inside the cage
+            radius = SCENE_CONFIG['cage_radius'] * 0.55  # Further from net, closer to center
         else:
             # Default: center of world
             center = [world_size / 2, world_size / 2]
