@@ -1524,7 +1524,7 @@ def create_enhanced_contour_detection_video(
         Row 2: Search Mask | Best Contour | Distance Measurement
     
     Args:
-        npz_path: Path to simulated data NPZ file (with 'cones' key)
+        npz_path: Path to NPZ file or ROS bag (will be converted to NPZ)
         output_path: Output video file path
         frame_start: Starting frame index
         frame_count: Maximum number of frames to process
@@ -1538,11 +1538,37 @@ def create_enhanced_contour_detection_video(
     print(f"Input: {npz_path}")
     print(f"Output: {output_path}")
     
+    # Convert bag files to NPZ first
+    npz_path = Path(npz_path)
+    if npz_path.suffix == '.bag':
+        print("\n⚠️  Input is a ROS bag file. Converting to NPZ format...")
+        df, metadata = load_or_extract_sonar_data(npz_path, use_cache=True)
+        
+        # Get the cached NPZ path (in cache subdirectory)
+        cache_dir = npz_path.parent / "cache"
+        cache_path = cache_dir / f"{npz_path.stem}_raw_polar.npz"
+        
+        if not cache_path.exists():
+            print(f"ERROR: Failed to create NPZ cache at {cache_path}")
+            return None
+        
+        npz_path = cache_path
+        print(f"✓ Using cached NPZ: {npz_path}\n")
+    
     # Load data - handle both polar and cone-view formats
     try:
         with np.load(npz_path, allow_pickle=True) as data:
-            cones_raw = data['cones']  # May be polar or cone-view
-            timestamps = data.get('ts_unix_ns', np.arange(len(cones_raw)))
+            # Check which key is available
+            if 'cones' in data:
+                cones_raw = data['cones']  # May be polar or cone-view
+            elif 'raw_polar' in data:
+                cones_raw = data['raw_polar']  # Polar format from bag extraction
+            else:
+                print(f"ERROR: NPZ file must contain 'cones' or 'raw_polar' key")
+                print(f"Available keys: {list(data.keys())}")
+                return None
+            
+            timestamps = data.get('ts_unix_ns', data.get('timestamps', np.arange(len(cones_raw))))
             extent = data.get('extent', None)
             
             # Check if data is polar format (tall/narrow) and needs conversion
