@@ -12,6 +12,9 @@ SONAR_CONFIG = {
     'num_beams': 256,          # Number of acoustic beams
     'range_bins': 1024,        # Number of range bins (output resolution)
     
+    # Overall intensity calibration (post-processing gain)
+    'intensity_gain': 203.92,  # Multiply all returns by this factor to match real sonar intensity levels
+    
     # Ray marching parameters
     'step_size_factor': 0.5,   # Step size as fraction of voxel size
     'energy_threshold': 0.01,  # Minimum energy to continue ray marching
@@ -21,10 +24,11 @@ SONAR_CONFIG = {
     'spreading_loss_min': 1.0, # Minimum range for spreading loss calculation
     
     # Beam pattern
-    'beam_pattern_falloff': 2.5,  # Gaussian falloff toward beam edges (higher = stronger falloff)
+    'beam_pattern_falloff': 0.45,  # Gaussian falloff toward beam edges (higher = stronger falloff)
+                                   # Reduced from 2.5 to 0.45 (0.18x) to match real data edge intensity
     
     # Noise and artifacts (speckle, jitter, decorrelation)
-    'speckle_shape': 1.2,      # Gamma distribution shape for acoustic speckle
+    'speckle_shape': 5.0,      # Gamma distribution shape for acoustic speckle
     'aspect_variation_std': 0.8,  # Aspect angle variation std dev
     'aspect_variation_range': [0.2, 2.0],  # Min/max aspect variation
     
@@ -37,7 +41,7 @@ SONAR_CONFIG = {
     'spread_bin_options': [2, 3, 4],  # Possible spread widths
     'spread_bin_probs': [0.5, 0.35, 0.15],  # Probabilities for each width
     
-    'temporal_decorrelation_shape': 5.0,  # Gamma shape for frame-to-frame variation
+    'temporal_decorrelation_shape': 15.0,  # Gamma shape for frame-to-frame variation
     
     # Absorption and shadow parameters
     'absorption_factor': 2.0,   # Absorption strength multiplier
@@ -102,7 +106,7 @@ SCENE_CONFIG = {
     'net_sag': 0.1,          # Maximum net sag in meters
     
     # Fish parameters
-    'num_fish': 200,           # Number of fish in cage
+    'num_fish': 0,             # Number of fish in cage (0 = no fish)
     'fish_length_range': [0.4, 0.6],  # Fish length range [min, max]
     'fish_width_ratio': 0.20,  # Width as fraction of length
 }
@@ -135,10 +139,11 @@ DATA_COLLECTION_CONFIG = {
     ],
     
     # Orientation variation: angle_offset = sum(sin(angle * freq + phase) * amp) * orientation_noise
+    # SET TO 0 to always face net directly with no orientation changes
     'orientation_sine_waves': [
-        {'frequency': 5.0, 'amplitude': 0.6, 'phase_offset': 0.0},      # Main sweeps
-        {'frequency': 11.0, 'amplitude': 0.5, 'phase_offset': 0.05},    # Detail (phase varies per sample)
-        {'frequency': 2.0, 'amplitude': 0.3, 'phase_offset': 0.0},      # Slow sweep
+        {'frequency': 5.0, 'amplitude': 0.0, 'phase_offset': 0.0},      # Disabled - always face net
+        {'frequency': 11.0, 'amplitude': 0.0, 'phase_offset': 0.0},     # Disabled - always face net
+        {'frequency': 2.0, 'amplitude': 0.0, 'phase_offset': 0.0},      # Disabled - always face net
     ],
 }
 

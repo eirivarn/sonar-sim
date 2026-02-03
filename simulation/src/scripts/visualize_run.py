@@ -59,27 +59,49 @@ def load_run_data(run_dir):
             scene_snapshot = json.load(f)
         print(f"Loaded scene snapshot: {scene_snapshot['scene_type']}")
     
-    # Find all frames
-    sonar_files = sorted((run_dir / 'sonar').glob('frame_*.npy'))
-    num_frames = len(sonar_files)
-    
-    print(f"Found {num_frames} frames in {run_dir}")
-    
-    # Load all frame data
-    frames = []
-    for i in range(num_frames):
-        frame_data = {
-            'sonar': np.load(run_dir / 'sonar' / f'frame_{i:06d}.npy'),
-            'ground_truth': np.load(run_dir / 'ground_truth' / f'frame_{i:06d}.npy'),
-        }
+    # Find all frames - check for new .npz format first, then fall back to old .npy format
+    frames_dir = run_dir / 'frames'
+    if frames_dir.exists():
+        # New format: .npz files in frames/ directory
+        frame_files = sorted(frames_dir.glob('frame_*.npz'))
+        num_frames = len(frame_files)
+        print(f"Found {num_frames} frames in {run_dir} (npz format)")
         
-        # Load metadata if available
-        meta_path = run_dir / 'metadata' / f'frame_{i:06d}.json'
-        if meta_path.exists():
-            with open(meta_path) as f:
-                frame_data['metadata'] = json.load(f)
+        # Load all frame data from .npz files
+        frames = []
+        for frame_file in frame_files:
+            data = np.load(frame_file)
+            frame_data = {
+                'sonar': data['sonar_image'],
+                'ground_truth': data['ground_truth'],
+            }
+            
+            # Load metadata from JSON string in npz
+            if 'meta_json' in data:
+                frame_data['metadata'] = json.loads(str(data['meta_json']))
+            
+            frames.append(frame_data)
+    else:
+        # Old format: separate .npy files in sonar/ and ground_truth/ directories
+        sonar_files = sorted((run_dir / 'sonar').glob('frame_*.npy'))
+        num_frames = len(sonar_files)
+        print(f"Found {num_frames} frames in {run_dir} (npy format)")
         
-        frames.append(frame_data)
+        # Load all frame data
+        frames = []
+        for i in range(num_frames):
+            frame_data = {
+                'sonar': np.load(run_dir / 'sonar' / f'frame_{i:06d}.npy'),
+                'ground_truth': np.load(run_dir / 'ground_truth' / f'frame_{i:06d}.npy'),
+            }
+            
+            # Load metadata if available
+            meta_path = run_dir / 'metadata' / f'frame_{i:06d}.json'
+            if meta_path.exists():
+                with open(meta_path) as f:
+                    frame_data['metadata'] = json.load(f)
+            
+            frames.append(frame_data)
     
     return {
         'run_config': run_config,

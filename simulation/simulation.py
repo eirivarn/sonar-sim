@@ -234,9 +234,7 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
         
         # Create directory structure
         save_dir = Path('data') / 'runs' / run_name
-        (save_dir / 'sonar').mkdir(parents=True, exist_ok=True)
-        (save_dir / 'ground_truth').mkdir(parents=True, exist_ok=True)
-        (save_dir / 'metadata').mkdir(parents=True, exist_ok=True)
+        (save_dir / 'frames').mkdir(parents=True, exist_ok=True)  # All data in .npz files
         
         # Save run configuration
         from src.config import SONAR_CONFIG, VISUALIZATION_CONFIG
@@ -393,43 +391,62 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
                 # Perform scan
                 sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
                 
+                # Scale to [0-255] range to match real sonar data
+                # Simulation returns [0-1] normalized values, real data is in [0-255]
+                sonar_image = np.clip(sonar_image * 255.0, 0, 255).astype(np.float32)
+                
                 # Save data
                 frame_num = frame_counter['count']
                 
                 # ROS-compatible timestamp (seconds since epoch)
                 import time
-                timestamp = time.time()
+                timestamp_s = time.time()
+                timestamp_ns = int(timestamp_s * 1e9)  # Convert to nanoseconds
                 
                 # Verify sonar image is float32 and shape is (1024, 256)
-                sonar_image = sonar_image.astype(np.float32)
                 assert sonar_image.shape == (1024, 256), f"Expected (1024, 256), got {sonar_image.shape}"
+                assert sonar_image.dtype == np.float32, f"Expected float32, got {sonar_image.dtype}"
                 
-                # Save sonar image as raw float32 array
-                sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
-                np.save(sonar_path, sonar_image)
-                
-                # Save ground truth
-                gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
-                np.save(gt_path, ground_truth)
-                
-                # Save metadata in ROS-compatible format
+                # Prepare metadata as JSON string (SOLAQUA format)
                 metadata = {
                     'frame': frame_num,
-                    't': timestamp,  # UTC timestamp in seconds (ROS format)
+                    't': timestamp_s,  # UTC timestamp in seconds (ROS format)
+                    'ts_unix_ns': timestamp_ns,  # Nanosecond timestamp
                     'dim_sizes': [1024, 256],  # [range_bins, beams] matching ROS
                     'dim_labels': ['range', 'beam'],  # ROS dimension labels
                     'sonar_position': sonar.position.tolist(),
                     'sonar_direction': sonar.direction.tolist(),
-                    'range_m': sonar.range_m,
-                    'fov_deg': sonar.fov_deg,
-                    'data_shape': list(sonar_image.shape),  # Explicit shape info
-                    'data_dtype': str(sonar_image.dtype),  # float32
+                    'range_m': float(sonar.range_m),
+                    'fov_deg': float(sonar.fov_deg),
+                    'data_shape': list(sonar_image.shape),
+                    'data_dtype': str(sonar_image.dtype),
+                    'intensity_scale': [0.0, 255.0],  # Data range matches real sonar
                     'fish_positions': [fish['pos'].tolist() for fish in dynamic_objects['fish_data']],
                     'fish_species': [fish['species'] for fish in dynamic_objects['fish_data']],
                 }
-                meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
-                with open(meta_path, 'w') as f:
-                    json.dump(metadata, f, indent=2)
+                
+                # Calculate spatial extent (for SOLAQUA compatibility)
+                # Sonar FOV creates a cone - calculate approximate bounds
+                fov_rad = np.deg2rad(sonar.fov_deg)
+                max_range = sonar.range_m
+                half_width = max_range * np.tan(fov_rad / 2)
+                extent = np.array([
+                    sonar.position[0] - half_width,  # x_min
+                    sonar.position[0] + half_width,  # x_max
+                    sonar.position[1],                # y_min (sonar position)
+                    sonar.position[1] + max_range    # y_max (max range ahead)
+                ], dtype=np.float32)
+                
+                # Save as NPZ file (SOLAQUA-compatible format)
+                npz_path = save_dir / 'frames' / f'frame_{frame_num:06d}.npz'
+                np.savez_compressed(
+                    npz_path,
+                    sonar_image=sonar_image,           # (1024, 256) float32 array
+                    ground_truth=ground_truth,         # (1024, 256) uint8 array
+                    ts_unix_ns=np.array([timestamp_ns], dtype=np.int64),  # Nanosecond timestamp
+                    extent=extent,                     # (4,) spatial bounds
+                    meta_json=json.dumps(metadata)     # JSON string with all metadata
+                )
                 
                 frame_counter['count'] += 1
                 
@@ -472,35 +489,72 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
                 sonar.direction = direction.copy()
                 
                 # Update scene (fish continue moving in the same world)
-                scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
+                from src.utils.profiler import get_profiler
+                profiler = get_profiler()
+                
+                with profiler.measure('scene_update'):
+                    scene_module.update_scene(grid, dynamic_objects, sonar.position, dt)
                 
                 # Perform scan
-                sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
+                with profiler.measure('sonar_scan'):
+                    sonar_image, ground_truth = sonar.scan(grid, return_ground_truth=True)
+                
+                # Scale to [0-255] range to match real sonar data
+                # Simulation returns [0-1] normalized values, real data is in [0-255]
+                sonar_image = np.clip(sonar_image * 255.0, 0, 255).astype(np.float32)
                 
                 # Save data
                 frame_num = frame_counter['count']
                 
-                # Save sonar image
-                sonar_path = save_dir / 'sonar' / f'frame_{frame_num:06d}.npy'
-                np.save(sonar_path, sonar_image)
+                # ROS-compatible timestamp (seconds since epoch)
+                import time
+                timestamp_s = time.time()
+                timestamp_ns = int(timestamp_s * 1e9)
                 
-                # Save ground truth
-                gt_path = save_dir / 'ground_truth' / f'frame_{frame_num:06d}.npy'
-                np.save(gt_path, ground_truth)
+                # Verify sonar image is float32 and shape is (1024, 256)
+                assert sonar_image.shape == (1024, 256), f"Expected (1024, 256), got {sonar_image.shape}"
+                assert sonar_image.dtype == np.float32, f"Expected float32, got {sonar_image.dtype}"
                 
-                # Save metadata including current fish positions
+                # Prepare metadata as JSON string (SOLAQUA format)
                 metadata = {
                     'frame': frame_num,
+                    't': timestamp_s,
+                    'ts_unix_ns': timestamp_ns,
+                    'dim_sizes': [1024, 256],
+                    'dim_labels': ['range', 'beam'],
                     'sonar_position': sonar.position.tolist(),
                     'sonar_direction': sonar.direction.tolist(),
-                    'range_m': sonar.range_m,
-                    'fov_deg': sonar.fov_deg,
+                    'range_m': float(sonar.range_m),
+                    'fov_deg': float(sonar.fov_deg),
+                    'data_shape': list(sonar_image.shape),
+                    'data_dtype': str(sonar_image.dtype),
+                    'intensity_scale': [0.0, 255.0],  # Data range matches real sonar
                     'fish_positions': [fish['pos'].tolist() for fish in dynamic_objects['fish_data']],
                     'fish_species': [fish['species'] for fish in dynamic_objects['fish_data']],
                 }
-                meta_path = save_dir / 'metadata' / f'frame_{frame_num:06d}.json'
-                with open(meta_path, 'w') as f:
-                    json.dump(metadata, f, indent=2)
+                
+                # Calculate spatial extent
+                fov_rad = np.deg2rad(sonar.fov_deg)
+                max_range = sonar.range_m
+                half_width = max_range * np.tan(fov_rad / 2)
+                extent = np.array([
+                    sonar.position[0] - half_width,
+                    sonar.position[0] + half_width,
+                    sonar.position[1],
+                    sonar.position[1] + max_range
+                ], dtype=np.float32)
+                
+                # Save as NPZ file (SOLAQUA-compatible format)
+                npz_path = save_dir / 'frames' / f'frame_{frame_num:06d}.npz'
+                with profiler.measure('save_npz'):
+                    np.savez_compressed(
+                        npz_path,
+                        sonar_image=sonar_image,
+                        ground_truth=ground_truth,
+                        ts_unix_ns=np.array([timestamp_ns], dtype=np.int64),
+                        extent=extent,
+                        meta_json=json.dumps(metadata)
+                    )
                 
                 frame_counter['count'] += 1
                 
@@ -512,8 +566,88 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
         print(f"\n{'='*60}")
         print(f"Data collection complete!")
         print(f"Collected {frame_counter['count']} frames")
-        print(f"Saved to: {save_dir}")
         print(f"{'='*60}\n")
+        
+        # CONSOLIDATE NPZ FILES INTO SINGLE FILE (SOLAQUA FORMAT)
+        print("Consolidating frames into single NPZ file (SOLAQUA format)...")
+        from src.utils.profiler import get_profiler
+        profiler = get_profiler()
+        
+        with profiler.measure('consolidation_total'):
+            frames_dir = save_dir / 'frames'
+            individual_npz_files = sorted(frames_dir.glob('frame_*.npz'))
+            
+            if individual_npz_files:
+                # Load all frames
+                all_frames = []
+                all_timestamps = []
+                all_metadata = []
+                first_extent = None
+                
+                with profiler.measure('consolidation_load_frames'):
+                    for npz_file in individual_npz_files:
+                        with np.load(npz_file, allow_pickle=True) as data:
+                            all_frames.append(data['sonar_image'])
+                            all_timestamps.append(data['ts_unix_ns'][0])  # Extract single timestamp
+                            
+                            if first_extent is None:
+                                first_extent = data['extent']
+                            
+                            # Parse metadata
+                            meta_str = data['meta_json']
+                            meta_dict = json.loads(meta_str.item() if hasattr(meta_str, 'item') else str(meta_str))
+                            all_metadata.append(meta_dict)
+                
+                # Stack frames into (T, H, W) array
+                with profiler.measure('consolidation_stack'):
+                    cones_stacked = np.stack(all_frames, axis=0).astype(np.float32)
+                    raw_polar_stacked = np.stack(all_frames, axis=0).astype(np.float32)  # Same as cones for simulation
+                    ts_stacked = np.array(all_timestamps, dtype=np.int64)
+                
+                # Create consolidated metadata
+                consolidated_meta = {
+                    'num_frames': len(all_frames),
+                    'range_m': all_metadata[0]['range_m'],
+                    'fov_deg': all_metadata[0]['fov_deg'],
+                    'rmin': 0.0,  # Add SOLAQUA-expected fields
+                    'rmax': all_metadata[0]['range_m'],
+                    'display_range_max_m': all_metadata[0]['range_m'],
+                    'collection_mode': collect_mode,
+                    'frames': all_metadata,  # Include all individual frame metadata
+                    'dim_labels': ['time', 'range_bins', 'beams'],
+                    'raw_polar_shape': list(raw_polar_stacked.shape),
+                }
+                
+                # Save consolidated NPZ file (matching real data format)
+                consolidated_path = save_dir / f'{save_dir.name}_cones.npz'
+                with profiler.measure('consolidation_save'):
+                    np.savez_compressed(
+                        consolidated_path,
+                        cones=cones_stacked,           # (T, H, W) float32 array - PROCESSED
+                        raw_polar=raw_polar_stacked,   # (T, range_bins, beams) float32 - RAW
+                        extent=first_extent,            # (4,) float64 tuple
+                        ts_unix_ns=ts_stacked,          # (T,) int64 array
+                        meta_json=json.dumps(consolidated_meta)  # JSON string
+                    )
+                
+                print(f"✓ Consolidated NPZ saved: {consolidated_path.name}")
+                print(f"  Cones shape: {cones_stacked.shape}")
+                print(f"  Raw polar shape: {raw_polar_stacked.shape}")
+                print(f"  File size: {consolidated_path.stat().st_size / 1024 / 1024:.1f} MB")
+                print(f"  Individual frames kept in: {frames_dir}")
+            else:
+                print("⚠ No individual frames found to consolidate")
+        
+        print(f"\n{'='*60}")
+        print(f"All data saved to: {save_dir}")
+        print(f"{'='*60}\n")
+        
+        # Print performance profile (if enabled)
+        from src.utils.profiler import get_profiler
+        profiler = get_profiler()
+        if profiler.enabled:
+            profiler.report(min_time=0.01, top_n=15)
+        
         return
     
     # INTERACTIVE GUI MODE (original behavior)

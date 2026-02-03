@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.core.voxel_grid import VoxelGrid
-from src.core.materials import FISH, NET, ROPE, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY, EMPTY
+from src.core.materials import FISH, NET, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY, EMPTY
 from src.core.dynamics import update_fish_optimized as update_fish
 from src.core.dynamics import update_debris_optimized as update_debris
 from src.core.fast_render import render_fish_batch
@@ -98,22 +98,22 @@ def create_scene():
                 NET
             )
             
-            # Occasional rope
-            if t % (1.0 / 7) < 0.025:
-                grid.set_box(
-                    np.array([x - 0.12, y - 0.12]),
-                    np.array([x + 0.12, y + 0.12]),
-                    ROPE
-                )
+            # Occasional rope - DISABLED for cleaner net-only simulation
+            # if t % (1.0 / 7) < 0.025:
+            #     grid.set_box(
+            #         np.array([x - 0.12, y - 0.12]),
+            #         np.array([x + 0.12, y + 0.12]),
+            #         ROPE
+            #     )
     
-    # Feed pipe
-    grid.set_box(
-        np.array([cage_center[0] - 0.15, cage_center[1] - 0.15]),
-        np.array([cage_center[0] + 0.15, cage_center[1] + 0.15]),
-        ROPE
-    )
+    # Feed pipe - DISABLED for cleaner net-only simulation
+    # grid.set_box(
+    #     np.array([cage_center[0] - 0.15, cage_center[1] - 0.15]),
+    #     np.array([cage_center[0] + 0.15, cage_center[1] + 0.15]),
+    #     ROPE
+    # )
     
-    # Cache the static environment (net + feed pipe)
+    # Cache the static environment (net only, no feed pipe)
     static_density = grid.density.copy()
     static_reflectivity = grid.reflectivity.copy()
     static_absorption = grid.absorption.copy()

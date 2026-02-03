@@ -231,6 +231,9 @@ class VoxelSonar:
         decorrelation_noise = np.random.gamma(shape=decorr_shape, scale=1.0/decorr_shape, size=image.shape)
         image[signal_mask] *= decorrelation_noise[signal_mask]
         
+        # INTENSITY GAIN: Apply calibration to match real sonar levels
+        image *= SONAR_CONFIG['intensity_gain']
+        
         if return_ground_truth:
             return image, ground_truth
         else:
@@ -288,6 +291,9 @@ class VoxelSonar:
         decorrelation_noise = np.random.gamma(shape=decorr_shape, scale=1.0/decorr_shape, size=image.shape)
         image[signal_mask] *= decorrelation_noise[signal_mask]
         
+        # INTENSITY GAIN: Apply calibration to match real sonar levels
+        image *= SONAR_CONFIG['intensity_gain']
+        
         if return_ground_truth:
             return image, ground_truth
         else:
@@ -325,7 +331,7 @@ class VoxelSonar:
             absorption = grid.absorption[x, y]
             
             # VOLUME SCATTERING: Deposit return proportional to density and reflectivity
-            if density > 0.01:
+            if density > 0.05:  # Higher threshold filters weak background voxels
                 # ACOUSTIC SPECKLE: Multiplicative noise from coherent interference
                 speckle_shape = SONAR_CONFIG['speckle_shape']
                 speckle = np.random.gamma(shape=speckle_shape, scale=1.0/speckle_shape)
@@ -384,7 +390,7 @@ class VoxelSonar:
                         output_bins[bin_jitter] += return_energy * beam_strength * range_quality
             
             # ABSORPTION: Reduce forward energy (creates shadows)
-            if density > 0.01:
+            if density > 0.05:  # Higher threshold filters weak background voxels
                 # Both absorption and scattering reduce forward energy
                 energy *= np.exp(-absorption * step_size * SONAR_CONFIG['absorption_factor'])
                 energy *= (1.0 - density * reflectivity * step_size * SONAR_CONFIG['scattering_loss_factor'])
