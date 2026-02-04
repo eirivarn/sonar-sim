@@ -3,6 +3,8 @@
 This version uses separate static and dynamic layers to avoid rebuilding
 the entire scene every frame. The static net structure is cached and only
 the fish positions are updated.
+
+Also includes floating particle system for ambient ocean debris.
 """
 import numpy as np
 import sys
@@ -13,8 +15,9 @@ from src.core.voxel_grid import VoxelGrid
 from src.core.materials import FISH, NET, DEBRIS_LIGHT, DEBRIS_MEDIUM, DEBRIS_HEAVY, EMPTY
 from src.core.dynamics import update_fish_optimized as update_fish
 from src.core.dynamics import update_debris_optimized as update_debris
+from src.core.dynamics import FloatingParticleSystem
 from src.core.fast_render import render_fish_batch
-from src.config import SCENE_CONFIG
+from src.config import SCENE_CONFIG, PARTICLE_CONFIG
 
 
 def create_scene():
@@ -163,6 +166,13 @@ def create_scene():
     for fish in fish_data:
         grid.set_ellipse(fish['pos'], fish['radii'], fish['orientation'], FISH)
     
+    # Initialize floating particle system
+    world_bounds = (0, SCENE_CONFIG['world_size_m'], 0, SCENE_CONFIG['world_size_m'])
+    particle_system = FloatingParticleSystem(
+        world_bounds=world_bounds,
+        max_particles=PARTICLE_CONFIG['max_particles']
+    ) if PARTICLE_CONFIG['enabled'] else None
+    
     # Cache the static environment in dynamic_objects for fast restore
     # This allows update_scene to restore the static layer quickly
     return {
@@ -174,6 +184,7 @@ def create_scene():
         'dynamic_objects': {
             'fish_data': fish_data,
             'debris_data': [],
+            'particle_system': particle_system,
             # Cached static environment for fast restore
             'static_cache': {
                 'density': static_density,
@@ -186,21 +197,23 @@ def create_scene():
 
 
 def update_scene(grid, dynamic_objects, sonar_pos, dt=0.1):
-    """Update fish positions using layered rendering.
+    """Update fish positions and floating particles using layered rendering.
     
     This optimized version:
     1. Restores static environment from cache (fast array copy)
     2. Updates only fish positions
     3. Renders fish on top of static layer
+    4. Updates floating particle system
     
     Args:
         grid: VoxelGrid to update
-        dynamic_objects: Dynamic objects dict with fish_data and static_cache
+        dynamic_objects: Dynamic objects dict with fish_data, particle_system, and static_cache
         sonar_pos: Sonar position for avoidance
         dt: Time step in seconds
     """
     fish_data = dynamic_objects['fish_data']
     debris_data = dynamic_objects['debris_data']
+    particle_system = dynamic_objects.get('particle_system')
     cage_center = np.array(SCENE_CONFIG['cage_center'])
     cage_radius = SCENE_CONFIG['cage_radius']
     
@@ -217,6 +230,10 @@ def update_scene(grid, dynamic_objects, sonar_pos, dt=0.1):
         grid.reflectivity[:] = cache['reflectivity']
         grid.absorption[:] = cache['absorption']
         grid.material_id[:] = cache['material_id']
+        
+        # Update floating particles (drawn on top of static layer, before fish)
+        if particle_system is not None and PARTICLE_CONFIG['enabled']:
+            particle_system.update(grid, dt, spawn_rate=PARTICLE_CONFIG['spawn_rate'])
         
         # Fast batch rendering of all fish using vectorized operations
         render_fish_batch(grid, fish_data)

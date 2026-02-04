@@ -24,28 +24,62 @@ SONAR_CONFIG = {
     'spreading_loss_min': 1.0, # Minimum range for spreading loss calculation
     
     # Beam pattern
-    'beam_pattern_falloff': 0.45,  # Gaussian falloff toward beam edges (higher = stronger falloff)
+    'beam_pattern_falloff': 0.50,  # Gaussian falloff toward beam edges (higher = stronger falloff)
                                    # Reduced from 2.5 to 0.45 (0.18x) to match real data edge intensity
     
     # Noise and artifacts (speckle, jitter, decorrelation)
-    'speckle_shape': 5.0,      # Gamma distribution shape for acoustic speckle
-    'aspect_variation_std': 0.8,  # Aspect angle variation std dev
-    'aspect_variation_range': [0.2, 2.0],  # Min/max aspect variation
+    'speckle_shape': 6.0,      # Gamma distribution shape for acoustic speckle (increased from 3.5 - less noise)
+    'aspect_variation_std': 1.5,  # Aspect angle variation std dev (increased for more scatter)
+    'aspect_variation_range': [0.1, 3.5],  # Min/max aspect variation (wider range)
     
-    'jitter_probability': 0.5,  # Probability of range jitter per return
-    'jitter_std_base': 1.5,     # Base standard deviation for range jitter (bins)
-    'jitter_range_factor': 3.0, # How much jitter increases with range
-    'jitter_max_offset': 8,     # Maximum jitter offset in bins
+    'jitter_probability': 0.35,  # Probability of range jitter per return (reduced from 0.65)
+    'jitter_std_base': 2.0,     # Base standard deviation for range jitter (bins) (increased)
+    'jitter_range_factor': 4.0, # How much jitter increases with range (increased)
+    'jitter_max_offset': 12,     # Maximum jitter offset in bins (increased)
     
-    'spread_probability': 0.3,  # Probability of multi-bin spreading
-    'spread_bin_options': [2, 3, 4],  # Possible spread widths
-    'spread_bin_probs': [0.5, 0.35, 0.15],  # Probabilities for each width
+    'spread_probability': 0.25,  # Probability of multi-bin spreading (reduced from 0.50)
+    'spread_bin_options': [2, 3, 4, 5, 6],  # Possible spread widths (added more)
+    'spread_bin_probs': [0.3, 0.2, 0.1, 0.2, 0.1],  # Probabilities for each width
     
-    'temporal_decorrelation_shape': 15.0,  # Gamma shape for frame-to-frame variation
+    'temporal_decorrelation_shape': 25.0,  # Gamma shape for frame-to-frame variation (increased from 12.0 - less flicker)
+    
+    # Angle-dependent scattering (new parameters)
+    'angle_scatter_strength': 3.0,  # Multiplier for off-axis scatter intensity
+    'angle_scatter_power': 5.5,     # How quickly scatter increases toward edges (higher = more extreme)
+    
+    # Density-dependent scattering (new parameters)
+    'density_scatter_threshold': 0.3,  # Density above which extra scatter kicks in
+    'density_scatter_strength': 1.8,   # Multiplier for high-density scatter
+    'density_noise_boost': 0.3,        # Additional jitter probability in dense areas
     
     # Absorption and shadow parameters
-    'absorption_factor': 2.0,   # Absorption strength multiplier
-    'scattering_loss_factor': 3.0,  # Energy loss from scattering
+    'absorption_factor': 5.0,   # Absorption strength multiplier
+    'scattering_loss_factor': 5.0,  # Energy loss from scattering
+    'proximity_shadow_enabled': True,   # Enable distance-dependent shadowing
+    'proximity_shadow_strength': 3.0,   # Multiplier for shadow strength (closer = stronger)
+    'proximity_shadow_max_distance': 10.0,  # Distance at which proximity effect stops (meters)
+    
+    # Azimuth streaking (range-dependent gain saturation)
+    'azimuth_streak_enabled': True,     # Enable range-slice saturation effects
+    'azimuth_streak_threshold': 0.3,    # Energy threshold to trigger (increased from 0.4)
+    'azimuth_streak_probability': 0.3,  # Probability when threshold exceeded (reduced from 0.6)
+    'azimuth_streak_strength': 5.0,     # Gain adjustment strength (±120%, way up from 40%)
+    'azimuth_streak_width': 50,         # Width of streak in beams (increased from 30)
+    
+    # Grouped scattering (coherent noise patches)
+    'grouped_scatter_enabled': True,    # Enable coherent noise patches
+    'grouped_scatter_probability': 0.15, # Probability per beam (reduced from 0.4 for lower frequency)
+    'grouped_scatter_width': 10,         # How many adjacent beams affected (increased from 5)
+    'grouped_scatter_coherence': 2.0,   # How similar the scatter is (increased for visibility)
+    'grouped_scatter_strength': 2.0,    # Scatter magnitude (±150%, way up from 60%)
+    'grouped_scatter_additive_prob': 0.5,  # Probability that scatter adds energy (vs multiply)
+    'grouped_scatter_disappear_prob': 0.35, # Probability that scatter removes energy
+    'grouped_scatter_additive_boost': 2.0, # Energy multiplier when adding (creates bright spots)
+    
+    # Single-pixel jitter scatter behavior
+    'jitter_additive_prob': 0.3,       # Probability that jittered pixel adds energy
+    'jitter_disappear_prob': 0.25,      # Probability that jittered pixel disappears
+    'jitter_additive_boost': 1.5,       # Energy multiplier for additive jitter
 }
 
 # ============================================================================
@@ -66,7 +100,7 @@ VISUALIZATION_CONFIG = {
     
     # Display normalization
     'db_normalization': 60,    # dB range for display normalization
-    'sonar_colormap': 'hot',   # Colormap for sonar image
+    'sonar_colormap': 'gray',   # Colormap for sonar image (gray, hot, viridis, etc.)
     
     # Ground truth visualization colors (RGB)
     'material_colors': {
@@ -94,6 +128,25 @@ VISUALIZATION_CONFIG = {
 }
 
 # ============================================================================
+# FLOATING PARTICLE PARAMETERS
+# ============================================================================
+PARTICLE_CONFIG = {
+    'enabled': True,            # Enable/disable floating particle system
+    'max_particles': 500,       # Maximum number of active particles (increased from 200)
+    'spawn_rate': 20.0,         # Particles spawned per second (increased from 5.0)
+    'size_mean': 0.08,          # Mean particle size (exponential distribution)
+    'size_min': 0.03,           # Minimum particle size
+    'size_max': 0.25,           # Maximum particle size
+    'lifetime_min': 2.0,        # Minimum particle lifetime (seconds)
+    'lifetime_max': 10.0,       # Maximum particle lifetime (seconds)
+    'drift_speed': 0.03,        # Maximum drift velocity
+    'vertical_bob_speed': 2.0,  # Vertical bobbing frequency
+    'vertical_bob_amplitude': 0.02,  # Vertical bobbing amplitude
+    'density_bias': 0.7,        # How much to bias spawning toward dense areas (0-1)
+    'density_threshold': 0.2,   # Density above which to boost particle spawning
+}
+
+# ============================================================================
 # SCENE PARAMETERS
 # ============================================================================
 SCENE_CONFIG = {
@@ -106,7 +159,7 @@ SCENE_CONFIG = {
     'net_sag': 0.1,          # Maximum net sag in meters
     
     # Fish parameters
-    'num_fish': 0,             # Number of fish in cage (0 = no fish)
+    'num_fish': 80,             # Number of fish in cage (0 = no fish)
     'fish_length_range': [0.4, 0.6],  # Fish length range [min, max]
     'fish_width_ratio': 0.20,  # Width as fraction of length
 }
@@ -182,9 +235,9 @@ MATERIAL_CONFIG = {
         'absorption': 1.0,     # Strong shadow
     },
     'debris_light': {
-        'reflectivity': 0.8,
-        'scattering': 0.6,
-        'absorption': 0.1,
+        'reflectivity': 0.95,  # Increased from 0.8 for better visibility
+        'scattering': 0.7,     # Increased from 0.6
+        'absorption': 0.05,    # Decreased from 0.1 for less attenuation
     },
     'debris_medium': {
         'reflectivity': 0.9,

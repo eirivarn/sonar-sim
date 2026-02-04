@@ -119,19 +119,26 @@ class VoxelGrid:
         """Check if voxel indices are inside grid."""
         return 0 <= x < self.size_x and 0 <= y < self.size_y
     
-    def set_circle(self, center: np.ndarray, radius: float, material: Material):
-        """Fill circle with material."""
+    def set_circle(self, center: np.ndarray, radius: float, material: Material, intensity: float = 1.0):
+        """Fill circle with material.
+        
+        Args:
+            center: Center position [x, y]
+            radius: Circle radius
+            material: Material to fill with
+            intensity: Intensity multiplier (0-1) for fading effects
+        """
         cx, cy = self.world_to_voxel(center)
-        r_voxels = int(radius / self.voxel_size)
+        r_voxels = max(1, int(radius / self.voxel_size))  # At least 1 voxel
         
         for dx in range(-r_voxels, r_voxels + 1):
             for dy in range(-r_voxels, r_voxels + 1):
                 if dx*dx + dy*dy <= r_voxels*r_voxels:
                     x, y = cx + dx, cy + dy
                     if self.is_inside(x, y):
-                        self.density[x, y] = material.density
-                        self.reflectivity[x, y] = material.reflectivity
-                        self.absorption[x, y] = material.absorption
+                        self.density[x, y] = material.density * intensity
+                        self.reflectivity[x, y] = material.reflectivity * intensity
+                        self.absorption[x, y] = material.absorption * intensity
                         self.material_id[x, y] = material.material_id
     
     def set_ellipse(self, center: np.ndarray, radii: np.ndarray, orientation: float, material: Material):

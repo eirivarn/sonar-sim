@@ -13,13 +13,16 @@ import math
 def march_ray_numba(grid_density, grid_reflectivity, grid_absorption, grid_material_id,
                     grid_size_x, grid_size_y, voxel_size,
                     origin_x, origin_y, direction_x, direction_y,
-                    range_m, range_bins, beam_strength,
+                    range_m, range_bins, beam_strength, beam_angle_normalized,
                     step_size_factor, energy_threshold,
                     speckle_shape, aspect_std, aspect_range_min, aspect_range_max,
                     spreading_loss_min, water_absorption,
                     jitter_probability, jitter_std_base, jitter_range_factor, jitter_max_offset,
                     spread_probability, spread_bin_options, spread_bin_probs,
-                    absorption_factor, scattering_loss_factor):
+                    absorption_factor, scattering_loss_factor,
+                    angle_scatter_strength, angle_scatter_power,
+                    density_scatter_threshold, density_scatter_strength, density_noise_boost,
+                    proximity_shadow_strength, proximity_shadow_max_distance):
     """JIT-compiled ray marching through voxel grid.
     
     Returns:
@@ -33,6 +36,14 @@ def march_ray_numba(grid_density, grid_reflectivity, grid_absorption, grid_mater
     current_x = origin_x
     current_y = origin_y
     energy = 1.0
+    
+    # Track closest significant obstacle for proximity shadowing
+    closest_obstacle_distance = range_m  # Start at max range
+    proximity_shadow_active = False
+    
+    # Calculate angle-dependent scatter multiplier (stronger at edges)
+    # beam_angle_normalized is in range [-1, 1] where ±1 are the FOV edges
+    angle_factor = 1.0 + angle_scatter_strength * (abs(beam_angle_normalized) ** angle_scatter_power)
     
     for step in range(num_steps):
         distance = step * step_size
@@ -55,11 +66,20 @@ def march_ray_numba(grid_density, grid_reflectivity, grid_absorption, grid_mater
         
         # VOLUME SCATTERING
         if density > 0.01:
-            # ACOUSTIC SPECKLE (Gamma distribution)
-            speckle = np.random.gamma(speckle_shape, 1.0/speckle_shape)
+            # Calculate density-dependent scatter boost
+            density_factor = 1.0
+            if density > density_scatter_threshold:
+                # High density areas scatter more
+                density_excess = (density - density_scatter_threshold) / (1.0 - density_scatter_threshold)
+                density_factor = 1.0 + density_scatter_strength * density_excess
             
-            # ASPECT ANGLE VARIATION
-            aspect_variation = 0.5 + aspect_std * np.random.randn()
+            # ACOUSTIC SPECKLE (Gamma distribution) - enhanced by angle and density
+            speckle = np.random.gamma(speckle_shape, 1.0/speckle_shape)
+            speckle *= angle_factor * density_factor
+            
+            # ASPECT ANGLE VARIATION - enhanced in high-density areas
+            aspect_std_effective = aspect_std * (1.0 + 0.5 * (density - density_scatter_threshold) if density > density_scatter_threshold else 1.0)
+            aspect_variation = 0.5 + aspect_std_effective * np.random.randn()
             aspect_variation = max(aspect_range_min, min(aspect_range_max, aspect_variation))
             
             # GEOMETRIC SHADOWING
@@ -71,20 +91,30 @@ def march_ray_numba(grid_density, grid_reflectivity, grid_absorption, grid_mater
             
             return_energy = scatter * spreading_loss * water_abs
             
-            # SPATIAL JITTER
+            # SPATIAL JITTER - enhanced at angles and in dense areas
             bin_idx = int((distance / range_m) * (range_bins - 1))
             
-            if np.random.rand() < jitter_probability:
+            # Increase jitter probability in dense areas
+            jitter_prob_effective = jitter_probability
+            if density > density_scatter_threshold:
+                jitter_prob_effective = min(0.95, jitter_probability + density_noise_boost * (density - density_scatter_threshold))
+            
+            if np.random.rand() < jitter_prob_effective:
                 range_factor = 1.0 + (distance / range_m) * jitter_range_factor
-                jitter_offset = int(round(np.random.randn() * jitter_std_base * range_factor))
+                # Apply angle-dependent jitter
+                jitter_strength = jitter_std_base * range_factor * angle_factor * density_factor
+                jitter_offset = int(round(np.random.randn() * jitter_strength))
                 jitter_offset = max(-jitter_max_offset, min(jitter_max_offset, jitter_offset))
                 bin_jitter = bin_idx + jitter_offset
                 bin_jitter = max(0, min(range_bins - 1, bin_jitter))
             else:
                 bin_jitter = bin_idx
             
-            # MULTI-BIN SPREADING
-            if np.random.rand() < spread_probability:
+            # MULTI-BIN SPREADING - more likely in dense areas and at angles
+            spread_prob_effective = spread_probability * angle_factor * density_factor
+            spread_prob_effective = min(0.9, spread_prob_effective)
+            
+            if np.random.rand() < spread_prob_effective:
                 # Choose number of bins to spread across
                 rand_val = np.random.rand()
                 cumsum = 0.0
@@ -98,22 +128,63 @@ def march_ray_numba(grid_density, grid_reflectivity, grid_absorption, grid_mater
                 spread_center = bin_jitter
                 half_spread = num_spread_bins // 2
                 
-                for offset in range(-half_spread, half_spread + 1):
-                    spread_bin = spread_center + offset
-                    if 0 <= spread_bin < range_bins:
-                        spread_weight = math.exp(-0.5 * (offset / (num_spread_bins/3))**2)
-                        range_quality = 1.0 / (1.0 + (distance / range_m) * 0.8)
-                        output_bins[spread_bin] += return_energy * beam_strength * range_quality * spread_weight / num_spread_bins
+                # Determine scatter mode: disappear, additive, or normal
+                mode_rand = np.random.rand()
+                if mode_rand < 0.15:  # 15% disappear
+                    # Don't deposit - energy disappears
+                    pass
+                elif mode_rand < 0.40:  # 25% additive (creates bright spots)
+                    for offset in range(-half_spread, half_spread + 1):
+                        spread_bin = spread_center + offset
+                        if 0 <= spread_bin < range_bins:
+                            spread_weight = math.exp(-0.5 * (offset / (num_spread_bins/3))**2)
+                            range_quality = 1.0 / (1.0 + (distance / range_m) * 0.8)
+                            # Additive: boost energy and ADD to existing
+                            boosted_energy = return_energy * 1.8 * beam_strength * range_quality * spread_weight / num_spread_bins
+                            output_bins[spread_bin] += boosted_energy
+                else:  # 60% normal
+                    for offset in range(-half_spread, half_spread + 1):
+                        spread_bin = spread_center + offset
+                        if 0 <= spread_bin < range_bins:
+                            spread_weight = math.exp(-0.5 * (offset / (num_spread_bins/3))**2)
+                            range_quality = 1.0 / (1.0 + (distance / range_m) * 0.8)
+                            output_bins[spread_bin] += return_energy * beam_strength * range_quality * spread_weight / num_spread_bins
             else:
-                # Single bin deposit
-                if 0 <= bin_jitter < range_bins:
-                    range_quality = 1.0 / (1.0 + (distance / range_m) * 0.8)
-                    output_bins[bin_jitter] += return_energy * beam_strength * range_quality
+                # Single bin deposit - also with modes
+                mode_rand = np.random.rand()
+                if mode_rand < 0.15:  # 15% disappear
+                    # Don't deposit
+                    pass
+                elif mode_rand < 0.40:  # 25% additive boost
+                    if 0 <= bin_jitter < range_bins:
+                        range_quality = 1.0 / (1.0 + (distance / range_m) * 0.8)
+                        boosted_energy = return_energy * 1.8 * beam_strength * range_quality
+                        output_bins[bin_jitter] += boosted_energy
+                else:  # 60% normal
+                    if 0 <= bin_jitter < range_bins:
+                        range_quality = 1.0 / (1.0 + (distance / range_m) * 0.8)
+                        output_bins[bin_jitter] += return_energy * beam_strength * range_quality
         
         # ABSORPTION
         if density > 0.01:
-            energy *= math.exp(-absorption * step_size * absorption_factor)
-            energy *= (1.0 - density * reflectivity * step_size * scattering_loss_factor)
+            # Track closest obstacle for proximity shadowing
+            if not proximity_shadow_active and density > 0.3:
+                closest_obstacle_distance = distance
+                proximity_shadow_active = True
+            
+            # Calculate proximity shadow multiplier (closer objects cast stronger shadows)
+            # Shadow strength decreases linearly with distance up to max_distance (10m)
+            proximity_multiplier = 1.0
+            if proximity_shadow_active and distance > closest_obstacle_distance:
+                # We're behind an obstacle - apply proximity shadow
+                # Shadow strength: 1.0 (no effect) to shadow_strength (max effect)
+                # Inversely proportional to obstacle distance (closer = stronger shadow)
+                distance_factor = 1.0 - min(1.0, closest_obstacle_distance / proximity_shadow_max_distance)
+                proximity_multiplier = 1.0 + proximity_shadow_strength * distance_factor
+            
+            # Apply absorption with proximity enhancement
+            energy *= math.exp(-absorption * step_size * absorption_factor * proximity_multiplier)
+            energy *= (1.0 - density * reflectivity * step_size * scattering_loss_factor * proximity_multiplier)
             energy = max(0.0, energy)
         
         # Move forward
@@ -133,7 +204,10 @@ def scan_parallel_numba(grid_density, grid_reflectivity, grid_absorption, grid_m
                         spreading_loss_min, water_absorption,
                         jitter_probability, jitter_std_base, jitter_range_factor, jitter_max_offset,
                         spread_probability, spread_bin_options, spread_bin_probs,
-                        absorption_factor, scattering_loss_factor):
+                        absorption_factor, scattering_loss_factor,
+                        angle_scatter_strength, angle_scatter_power,
+                        density_scatter_threshold, density_scatter_strength, density_noise_boost,
+                        proximity_shadow_strength, proximity_shadow_max_distance):
     """JIT-compiled parallel sonar scan with ray marching.
     
     Returns:
@@ -150,6 +224,9 @@ def scan_parallel_numba(grid_density, grid_reflectivity, grid_absorption, grid_m
         t = beam_idx / (num_beams - 1) if num_beams > 1 else 0.5
         angle = (-fov_rad / 2) + t * fov_rad
         
+        # Calculate normalized angle for scatter effects: -1 (left edge) to +1 (right edge)
+        beam_angle_normalized = angle / (fov_rad / 2)
+        
         # BEAM PATTERN: Gaussian falloff toward edges
         beam_pattern = math.exp(-((angle / (fov_rad/2))**2) * beam_pattern_falloff)
         
@@ -163,13 +240,16 @@ def scan_parallel_numba(grid_density, grid_reflectivity, grid_absorption, grid_m
             grid_density, grid_reflectivity, grid_absorption, grid_material_id,
             grid_size_x, grid_size_y, voxel_size,
             position_x, position_y, beam_dir_x, beam_dir_y,
-            range_m, range_bins, beam_pattern,
+            range_m, range_bins, beam_pattern, beam_angle_normalized,
             step_size_factor, energy_threshold,
             speckle_shape, aspect_std, aspect_range_min, aspect_range_max,
             spreading_loss_min, water_absorption,
             jitter_probability, jitter_std_base, jitter_range_factor, jitter_max_offset,
             spread_probability, spread_bin_options, spread_bin_probs,
-            absorption_factor, scattering_loss_factor
+            absorption_factor, scattering_loss_factor,
+            angle_scatter_strength, angle_scatter_power,
+            density_scatter_threshold, density_scatter_strength, density_noise_boost,
+            proximity_shadow_strength, proximity_shadow_max_distance
         )
         
         image[:, beam_idx] = output_bins

@@ -2,11 +2,184 @@
 
 This module provides optimized update functions using spatial hashing
 to avoid O(N²) neighbor searches for fish flocking behavior.
+
+Also includes floating particle system for ambient ocean debris/particles.
 """
 
 import numpy as np
 from src.core.voxel_grid import VoxelGrid
-from src.core.materials import FISH, EMPTY
+from src.core.materials import FISH, EMPTY, DEBRIS_LIGHT
+
+
+class FloatingParticle:
+    """Represents a transient floating particle in the water."""
+    
+    def __init__(self, pos, velocity, size, lifetime, material, shape_type='circle', orientation=0.0):
+        self.pos = pos.copy()
+        self.velocity = velocity.copy()
+        self.size = size  # For circle: radius. For line: length
+        self.lifetime = lifetime  # Time until disappears
+        self.age = 0.0
+        self.material = material
+        self.vertical_phase = np.random.rand() * 2 * np.pi  # For bobbing motion
+        self.shape_type = shape_type  # 'circle' or 'line'
+        self.orientation = orientation  # Angle for line orientation
+
+
+class FloatingParticleSystem:
+    """Manages transient floating particles in the scene."""
+    
+    def __init__(self, world_bounds, max_particles=200):
+        """Initialize particle system.
+        
+        Args:
+            world_bounds: (x_min, x_max, y_min, y_max) bounds for particle spawning
+            max_particles: Maximum number of active particles
+        """
+        self.world_bounds = world_bounds
+        self.max_particles = max_particles
+        self.particles = []
+        self.spawn_timer = 0.0
+    
+    def update(self, grid: VoxelGrid, dt: float, spawn_rate=5.0):
+        """Update all particles and spawn new ones.
+        
+        Args:
+            grid: VoxelGrid to check density and draw particles
+            dt: Time step
+            spawn_rate: Particles to spawn per second
+        """
+        # Update existing particles
+        i = 0
+        while i < len(self.particles):
+            p = self.particles[i]
+            
+            # Age particle
+            p.age += dt
+            if p.age >= p.lifetime:
+                # Remove expired particle
+                self.particles.pop(i)
+                continue
+            
+            # Vertical bobbing motion (simulates buoyancy)
+            p.vertical_phase += dt * 2.0
+            vertical_drift = 0.02 * np.sin(p.vertical_phase)
+            
+            # Horizontal drift (water currents)
+            horizontal_drift = p.velocity * dt
+            
+            # Combine motions
+            p.pos[0] += horizontal_drift[0]
+            p.pos[1] += horizontal_drift[1] + vertical_drift
+            
+            # Random turbulence
+            if np.random.rand() < 0.1:
+                p.velocity += (np.random.rand(2) - 0.5) * 0.01
+                # Limit speed
+                speed = np.linalg.norm(p.velocity)
+                if speed > 0.05:
+                    p.velocity = p.velocity / speed * 0.05
+            
+            # Wrap around world bounds
+            x_min, x_max, y_min, y_max = self.world_bounds
+            if p.pos[0] < x_min:
+                p.pos[0] = x_max
+            elif p.pos[0] > x_max:
+                p.pos[0] = x_min
+            if p.pos[1] < y_min:
+                p.pos[1] = y_max
+            elif p.pos[1] > y_max:
+                p.pos[1] = y_min
+            
+            # Draw particle in grid (fade based on age)
+            fade_factor = 1.0 - (p.age / p.lifetime)
+            if fade_factor > 0.2:  # Only draw if visible enough
+                if p.shape_type == 'circle':
+                    grid.set_circle(p.pos, p.size, p.material, intensity=fade_factor)
+                else:  # line
+                    # Draw as elongated ellipse (length × width)
+                    width = p.size * 0.15  # Lines are thin (15% of length)
+                    grid.set_ellipse(p.pos, np.array([p.size, width]), p.orientation, p.material)
+            
+            i += 1
+        
+        # Spawn new particles based on spawn rate
+        self.spawn_timer += dt
+        particles_to_spawn = int(self.spawn_timer * spawn_rate)
+        self.spawn_timer -= particles_to_spawn / spawn_rate
+        
+        for _ in range(particles_to_spawn):
+            if len(self.particles) >= self.max_particles:
+                break
+            
+            # Spawn particle in random location
+            x_min, x_max, y_min, y_max = self.world_bounds
+            pos = np.array([
+                np.random.uniform(x_min, x_max),
+                np.random.uniform(y_min, y_max)
+            ])
+            
+            # Check local density - spawn more particles near structures
+            density_factor = self._get_local_density(grid, pos)
+            
+            # Bias spawning toward dense areas, but still allow spawns in open water
+            # Base 40% chance + up to 60% more in dense areas
+            spawn_probability = 0.4 + (density_factor * 0.6)
+            if np.random.rand() > spawn_probability:
+                continue
+            
+            # Random velocity (slow drift)
+            velocity = (np.random.rand(2) - 0.5) * 0.03
+            
+            # Random size: 1-15 cm (0.01-0.15m)
+            size = np.random.uniform(0.01, 0.15)
+            
+            # Random shape: 70% circles, 30% lines
+            if np.random.rand() < 0.7:
+                shape_type = 'circle'
+                orientation = 0.0
+            else:
+                shape_type = 'line'
+                orientation = np.random.rand() * np.pi  # Random angle
+            
+            # Lifetime varies (2-10 seconds)
+            lifetime = np.random.uniform(2.0, 10.0)
+            
+            # Create particle
+            particle = FloatingParticle(pos, velocity, size, lifetime, DEBRIS_LIGHT, 
+                                       shape_type=shape_type, orientation=orientation)
+            self.particles.append(particle)
+    
+    def _get_local_density(self, grid: VoxelGrid, pos):
+        """Sample local density around position to bias particle spawning.
+        
+        Args:
+            grid: VoxelGrid to sample
+            pos: Position to check
+            
+        Returns:
+            Average density in local area (0-1)
+        """
+        # Sample in small radius around position
+        samples = []
+        radius = 2.0
+        for _ in range(8):
+            angle = np.random.rand() * 2 * np.pi
+            offset = radius * np.array([np.cos(angle), np.sin(angle)])
+            sample_pos = pos + offset
+            
+            vx, vy = grid.world_to_voxel(sample_pos)
+            if grid.is_inside(vx, vy):
+                samples.append(grid.density[vx, vy])
+        
+        if len(samples) == 0:
+            return 0.1  # Default low density
+        
+        avg_density = np.mean(samples)
+        # Boost areas with medium-to-high density
+        if avg_density > 0.2:
+            return min(1.0, avg_density * 2.0)
+        return avg_density * 0.5
 
 
 class SpatialHash:

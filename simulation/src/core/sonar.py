@@ -222,7 +222,14 @@ class VoxelSonar:
             np.array(SONAR_CONFIG['spread_bin_options'], dtype=np.int32),
             np.array(SONAR_CONFIG['spread_bin_probs'], dtype=np.float64),
             SONAR_CONFIG['absorption_factor'],
-            SONAR_CONFIG['scattering_loss_factor']
+            SONAR_CONFIG['scattering_loss_factor'],
+            SONAR_CONFIG['angle_scatter_strength'],
+            SONAR_CONFIG['angle_scatter_power'],
+            SONAR_CONFIG['density_scatter_threshold'],
+            SONAR_CONFIG['density_scatter_strength'],
+            SONAR_CONFIG['density_noise_boost'],
+            SONAR_CONFIG['proximity_shadow_strength'],
+            SONAR_CONFIG['proximity_shadow_max_distance']
         )
         
         # TEMPORAL DECORRELATION
@@ -230,6 +237,119 @@ class VoxelSonar:
         decorr_shape = SONAR_CONFIG['temporal_decorrelation_shape']
         decorrelation_noise = np.random.gamma(shape=decorr_shape, scale=1.0/decorr_shape, size=image.shape)
         image[signal_mask] *= decorrelation_noise[signal_mask]
+        
+        # GROUPED SCATTERING: Coherent noise patches (adjacent beams scatter together)
+        if SONAR_CONFIG['grouped_scatter_enabled']:
+            group_prob = SONAR_CONFIG['grouped_scatter_probability']
+            group_width = SONAR_CONFIG['grouped_scatter_width']
+            coherence = SONAR_CONFIG['grouped_scatter_coherence']
+            scatter_strength = SONAR_CONFIG['grouped_scatter_strength']
+            additive_prob = SONAR_CONFIG['grouped_scatter_additive_prob']
+            disappear_prob = SONAR_CONFIG['grouped_scatter_disappear_prob']
+            additive_boost = SONAR_CONFIG['grouped_scatter_additive_boost']
+            
+            groups_applied = 0
+            # Scan through beams and occasionally apply grouped scattering
+            beam_idx = 0
+            while beam_idx < self.num_beams:
+                if np.random.rand() < group_prob and image[:, beam_idx].max() > 1e-6:
+                    # Find a range bin with signal in this beam
+                    signal_bins = np.where(image[:, beam_idx] > 1e-6)[0]
+                    if len(signal_bins) > 0:
+                        # Pick a random signal bin to scatter around
+                        center_bin = np.random.choice(signal_bins)
+                        
+                        # Determine scatter mode for this group
+                        mode_rand = np.random.rand()
+                        if mode_rand < disappear_prob:
+                            scatter_mode = 'disappear'
+                        elif mode_rand < disappear_prob + additive_prob:
+                            scatter_mode = 'additive'
+                        else:
+                            scatter_mode = 'multiply'
+                        
+                        # Generate base scatter pattern (use config strength)
+                        base_scatter = np.random.randn(group_width) * scatter_strength
+                        
+                        # Apply to adjacent beams
+                        for offset in range(group_width):
+                            beam_target = beam_idx + offset
+                            if beam_target >= self.num_beams:
+                                break
+                            
+                            # Mix coherent group scatter with independent noise
+                            coherent_scatter = base_scatter[offset]
+                            independent_scatter = np.random.randn() * scatter_strength
+                            mixed_scatter = coherence * coherent_scatter + (1 - coherence) * independent_scatter
+                            
+                            # Apply to a larger range patch around center_bin
+                            patch_size = np.random.randint(8, 20)  # Much larger patches (was 3-8)
+                            for r_offset in range(-patch_size//2, patch_size//2 + 1):
+                                r_idx = center_bin + r_offset
+                                if 0 <= r_idx < self.range_bins and image[r_idx, beam_target] > 1e-6:
+                                    if scatter_mode == 'disappear':
+                                        # Zero out or heavily attenuate
+                                        image[r_idx, beam_target] *= np.random.uniform(0.0, 0.2)
+                                    elif scatter_mode == 'additive':
+                                        # Add energy (creates bright spots)
+                                        scatter_mult = 1.0 + abs(mixed_scatter) * additive_boost
+                                        scatter_mult = np.clip(scatter_mult, 1.0, 5.0)
+                                        image[r_idx, beam_target] *= scatter_mult
+                                    else:
+                                        # Normal multiplicative scatter
+                                        scatter_mult = 1.0 + mixed_scatter
+                                        scatter_mult = np.clip(scatter_mult, 0.1, 4.0)
+                                        image[r_idx, beam_target] *= scatter_mult
+                        
+                        groups_applied += 1
+                        # Skip past this group
+                        beam_idx += group_width
+                    else:
+                        beam_idx += 1
+                else:
+                    beam_idx += 1
+            
+            if groups_applied > 0:
+                print(f"Applied {groups_applied} grouped scatter patches")
+        
+        # AZIMUTH STREAKING: Localized range-slice saturation from excessive returns
+        if SONAR_CONFIG['azimuth_streak_enabled']:
+            # Calculate total energy per range bin (across all azimuths)
+            range_energy = np.sum(image, axis=1)
+            max_energy = np.max(range_energy) if np.max(range_energy) > 0 else 1.0
+            
+            # Identify range bins with high energy
+            threshold = SONAR_CONFIG['azimuth_streak_threshold'] * max_energy
+            high_energy_ranges = range_energy > threshold
+            
+            num_high = np.sum(high_energy_ranges)
+            if num_high > 0:
+                print(f"Found {num_high} high-energy range bins (threshold={threshold:.2f}, max={max_energy:.2f})")
+            
+            # Apply streaking with some probability
+            streak_prob = SONAR_CONFIG['azimuth_streak_probability']
+            streak_strength = SONAR_CONFIG['azimuth_streak_strength']
+            streak_width = SONAR_CONFIG['azimuth_streak_width']  # Localized width
+            
+            streaks_applied = 0
+            for r_idx in np.where(high_energy_ranges)[0]:
+                if np.random.rand() < streak_prob:
+                    # Pick a random azimuth center for the localized streak
+                    streak_center = np.random.randint(0, self.num_beams)
+                    
+                    # Apply much stronger gain adjustment to a localized azimuth range
+                    # Can be either gain reduction (saturation) or boost (AGC overcompensation)
+                    gain_adjust = 1.0 + (np.random.rand() - 0.5) * 2 * streak_strength
+                    gain_adjust = np.clip(gain_adjust, 0.1, 3.0)  # Much more extreme (was 0.4-1.8)
+                    
+                    # Apply to localized beam range
+                    beam_start = max(0, streak_center - streak_width // 2)
+                    beam_end = min(self.num_beams, streak_center + streak_width // 2)
+                    image[r_idx, beam_start:beam_end] *= gain_adjust
+                    streaks_applied += 1
+            
+            if streaks_applied > 0:
+                print(f"Applied {streaks_applied} azimuth streaks")
         
         # INTENSITY GAIN: Apply calibration to match real sonar levels
         image *= SONAR_CONFIG['intensity_gain']
