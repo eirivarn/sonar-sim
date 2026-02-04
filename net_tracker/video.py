@@ -11,7 +11,7 @@ from tqdm import tqdm
 from .config import IMAGE_PROCESSING_CONFIG, TRACKING_CONFIG
 from .coordinate_transform import polar_to_db_normalized, rasterize_cone, to_uint8_gray
 from .image_processing import preprocess_edges, adaptive_linear_momentum_merge_fast
-from .data_loading import load_or_extract_sonar_data, get_sonar_frame_polar
+from .data_loading import load_or_extract_sonar_data, get_sonar_frame_polar, load_raw_polar_npz
 from .tracker import NetTracker
 
 
@@ -54,9 +54,9 @@ def generate_tracking_video(
     print(f"\nProcessing {len(frame_indices)} frames...")
     print(f"  FOV: {fov_deg}° | Range: {rmin}-{rmax}m | Size: {img_w}x{img_h}")
     
-    # Initialize video writer
+    # Initialize video writer (H.264 codec for VSCode compatibility)
     writer = None
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
     fps = 15.0
     
     # Process frames
@@ -173,3 +173,150 @@ def _create_debug_frame(
     debug_frame = np.vstack([top_row, bottom_row])
     
     return debug_frame
+
+
+def generate_raw_video(npz_path, output_path, frame_start=0, frame_count=None, frame_step=1, fps=30):
+    """
+    Generate a simple video showing just the raw sonar data (cone-view).
+    
+    Args:
+        npz_path: Path to NPZ file with sonar data (or DataFrame)
+        output_path: Output video path (will use raw_video_ prefix)
+        frame_start: Starting frame index
+        frame_count: Number of frames to process (None = all)
+        frame_step: Step between frames
+        fps: Video framerate
+    """
+    import os
+    import re
+    import cv2
+    import numpy as np
+    from pathlib import Path
+    from tqdm import tqdm
+    
+    # Extract timestamp or filename from input file path
+    source_identifier = None
+    if isinstance(npz_path, str) or hasattr(npz_path, '__fspath__'):
+        path = Path(npz_path)
+        # Look for date pattern in filename (YYYY-MM-DD or YYYYMMDD)
+        filename = path.stem
+        date_match = re.search(r'(\d{4})[_-]?(\d{2})[_-]?(\d{2})', filename)
+        if date_match:
+            source_identifier = f"{date_match.group(1)}{date_match.group(2)}{date_match.group(3)}"
+        else:
+            # No timestamp found - use filename (e.g., simulation data)
+            # Remove common suffixes like _cones, _raw_polar
+            clean_name = filename.replace('_cones', '').replace('_raw_polar', '')
+            source_identifier = clean_name
+    
+    # Load data - handle ROS bag, simulation NPZ, or cached NPZ
+    df = None
+    metadata = {}
+    
+    if isinstance(npz_path, str) or hasattr(npz_path, '__fspath__'):
+        path = Path(npz_path)
+        if path.suffix == '.bag':
+            # ROS bag file - extract with caching
+            print(f"Loading ROS bag: {path.name}")
+            df, metadata = load_or_extract_sonar_data(path)
+        else:
+            # NPZ file - check structure
+            with np.load(path, allow_pickle=True) as data:
+                if 'cones' in data.keys():
+                    # Simulation NPZ - load all cone data before context closes
+                    cones = data['cones']
+                    print(f"Loading simulation data: {len(cones)} frames")
+                    # Copy all cone data to list before context exits
+                    cone_list = [cones[i].copy() for i in range(len(cones))]
+                    # Create DataFrame with cone data directly accessible
+                    df = pd.DataFrame({
+                        'frame_idx': range(len(cone_list)),
+                        'cone_data': cone_list
+                    })
+                    metadata = {}
+                elif 'raw_polar' in data.keys():
+                    # Cached NPZ from ROS bag - will load after context
+                    pass
+                else:
+                    raise ValueError(f"NPZ file must contain 'raw_polar' or 'cones' key. Found: {list(data.keys())}")
+            
+            # If df not set (raw_polar case), load it properly
+            if df is None:
+                df, metadata = load_raw_polar_npz(npz_path)
+    else:
+        df = npz_path  # Already a DataFrame
+    
+    num_frames = len(df)
+    
+    if frame_count is None:
+        frame_count = num_frames - frame_start
+    
+    frame_end = min(frame_start + frame_count * frame_step, num_frames)
+    
+    # Create output path with identifier prefix
+    base_name = os.path.splitext(os.path.basename(str(output_path)))[0]
+    output_dir = os.path.dirname(str(output_path))
+    if source_identifier:
+        raw_output_path = os.path.join(output_dir, f"raw_video_{source_identifier}.mp4")
+    else:
+        raw_output_path = os.path.join(output_dir, f"raw_video_{base_name}.mp4")
+    
+    # Get first frame to determine size - handle both DataFrame types
+    if 'cone_data' in df.columns:
+        # Simulation data - check if polar format and convert to Cartesian
+        first_frame = df.iloc[frame_start]['cone_data']
+        # Check aspect ratio to determine if polar format
+        aspect_ratio = first_frame.shape[0] / first_frame.shape[1]
+        if aspect_ratio > 2.0:
+            # Polar format - convert to Cartesian cone-view
+            first_cone, _ = rasterize_cone(polar_to_db_normalized(first_frame))
+        else:
+            # Already in cone format - just use it
+            first_cone = first_frame
+        first_cone = to_uint8_gray(first_cone)
+    else:
+        # ROS bag data - needs polar to cone conversion
+        first_polar = get_sonar_frame_polar(df, frame_start)
+        first_cone, _ = rasterize_cone(polar_to_db_normalized(first_polar))
+        first_cone = to_uint8_gray(first_cone)
+    
+    H, W = first_cone.shape
+    
+    # Setup video writer (H.264 codec for VSCode compatibility)
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    out = cv2.VideoWriter(raw_output_path, fourcc, fps, (W, H))
+    
+    print(f"\nGenerating raw video: {raw_output_path}")
+    print(f"Frames: {frame_start} to {frame_end} (step={frame_step})")
+    
+    # Generate frames
+    for frame_idx in tqdm(range(frame_start, frame_end, frame_step), desc="Raw video"):
+        if 'cone_data' in df.columns:
+            # Simulation data - check if polar format and convert to Cartesian
+            frame = df.iloc[frame_idx]['cone_data']
+            # Check aspect ratio to determine if polar format
+            aspect_ratio = frame.shape[0] / frame.shape[1]
+            if aspect_ratio > 2.0:
+                # Polar format - convert to Cartesian cone-view
+                cone, _ = rasterize_cone(polar_to_db_normalized(frame))
+                cone_u8 = to_uint8_gray(cone)
+            else:
+                # Already in cone format
+                cone_u8 = to_uint8_gray(frame)
+        else:
+            # ROS bag data - convert from polar
+            polar = get_sonar_frame_polar(df, frame_idx)
+            cone, _ = rasterize_cone(polar_to_db_normalized(polar))
+            cone_u8 = to_uint8_gray(cone)
+        
+        cone_color = cv2.cvtColor(cone_u8, cv2.COLOR_GRAY2BGR)
+        
+        # Add frame number
+        cv2.putText(cone_color, f"Frame: {frame_idx}", (10, 25),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        out.write(cone_color)
+    
+    out.release()
+    print(f"Raw video saved to: {raw_output_path}")
+    return raw_output_path

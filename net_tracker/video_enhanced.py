@@ -43,6 +43,15 @@ def create_enhanced_contour_detection_video(
     print(f"Input: {npz_path}")
     print(f"Output: {output_path}")
     
+    # Extract timestamp from input file path name
+    import re
+    source_timestamp = None
+    input_path = Path(npz_path)
+    filename = input_path.stem
+    date_match = re.search(r'(\d{4})[_-]?(\d{2})[_-]?(\d{2})', filename)
+    if date_match:
+        source_timestamp = f"{date_match.group(1)}{date_match.group(2)}{date_match.group(3)}"
+    
     # Convert bag files to NPZ first
     npz_path = Path(npz_path)
     if npz_path.suffix == '.bag':
@@ -122,10 +131,17 @@ def create_enhanced_contour_detection_video(
     grid_h = H * 2
     grid_w = W * 3
     
+    # Add timestamp to filename if available
     outp = Path(output_path)
+    if source_timestamp:
+        # Insert timestamp before the filename
+        new_name = f"{source_timestamp}_{outp.name}"
+        outp = outp.parent / new_name
+    
     outp.parent.mkdir(parents=True, exist_ok=True)
     
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # H.264 codec for VSCode compatibility
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
     vw = cv2.VideoWriter(str(outp), fourcc, fps, (grid_w, grid_h))
     
     if not vw.isOpened():

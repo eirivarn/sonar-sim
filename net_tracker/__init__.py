@@ -71,7 +71,7 @@ from .data_loading import (
 from .tracker import NetTracker
 
 # Video generation
-from .video import generate_tracking_video
+from .video import generate_tracking_video, generate_raw_video
 from .video_enhanced import create_enhanced_contour_detection_video
 
 # Analysis
@@ -108,6 +108,7 @@ __all__ = [
     
     # Video generation
     "generate_tracking_video",
+    "generate_raw_video",
     "create_enhanced_contour_detection_video",
     
     # Analysis
