@@ -52,4 +52,4 @@ temp/
 
 # Data
 data/
-training_data/
+net_localization/training_data_augmented/

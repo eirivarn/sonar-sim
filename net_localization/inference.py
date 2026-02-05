@@ -3,6 +3,10 @@ Inference script for trained segmentation model.
 
 Usage:
     python inference.py --model best_net_segmentation.pth --image_dir test_images/
+    
+    # With temporal smoothing (recommended for video sequences)
+    python inference.py --model best_net_segmentation.pth --image_dir test_images/ \
+        --temporal_smoothing --window_size 5 --smooth_method median
 """
 
 import torch
@@ -15,6 +19,7 @@ from albumentations.pytorch import ToTensorV2
 import cv2
 import argparse
 import matplotlib.pyplot as plt
+from temporal_smoothing import TemporalSmoother, ProbabilityTemporalSmoother
 
 
 def load_model(model_path, device='cpu'):
@@ -41,7 +46,7 @@ def get_inference_transform():
     ])
 
 
-def predict_mask(model, image, device='cpu'):
+def predict_mask(model, image, device='cpu', smoother=None):
     """
     Predict segmentation mask for a single image.
     
@@ -49,6 +54,7 @@ def predict_mask(model, image, device='cpu'):
         model: Trained model
         image: Grayscale image (H, W) or RGB image (H, W, 3)
         device: torch device
+        smoother: Optional TemporalSmoother for temporal filtering
     
     Returns:
         Binary mask (H, W) with values 0-255
@@ -64,7 +70,20 @@ def predict_mask(model, image, device='cpu'):
     # Predict
     with torch.no_grad():
         output = model(img_tensor)
-        mask = (output[0, 0].cpu().numpy() > 0.5).astype(np.uint8) * 255
+        prob_map = output[0, 0].cpu().numpy()  # Probability map (0-1)
+    
+    # Apply temporal smoothing if available
+    if smoother is not None:
+        if isinstance(smoother, ProbabilityTemporalSmoother):
+            # Smooth probabilities, then threshold
+            mask = smoother.update_and_threshold(prob_map)
+        else:
+            # Threshold first, then smooth
+            binary = (prob_map > 0.5).astype(np.uint8) * 255
+            mask = smoother.update(binary)
+    else:
+        # No smoothing
+        mask = (prob_map > 0.5).astype(np.uint8) * 255
     
     return mask
 
@@ -170,14 +189,27 @@ def visualize_prediction(image, mask, lines=None, save_path=None):
     plt.close()
 
 
-def process_directory(model, image_dir, output_dir=None, device='cpu'):
+def process_directory(model, image_dir, output_dir=None, device='cpu', 
+                     temporal_smoothing=False, smooth_method='median', 
+                     window_size=5, alpha=0.3):
     """Process all images in a directory"""
     image_dir = Path(image_dir)
-    image_files = list(image_dir.glob('*.png')) + list(image_dir.glob('*.jpg'))
+    image_files = sorted(list(image_dir.glob('*.png')) + list(image_dir.glob('*.jpg')))
     
     if output_dir:
         output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True, parents=True)
+    
+    # Initialize temporal smoother if requested
+    smoother = None
+    if temporal_smoothing:
+        smoother = ProbabilityTemporalSmoother(
+            window_size=window_size,
+            method=smooth_method,
+            alpha=alpha,
+            threshold=0.5
+        )
+        print(f"🔄 Temporal smoothing enabled: {smooth_method}, window={window_size}")
     
     print(f"Processing {len(image_files)} images...")
     
@@ -185,8 +217,8 @@ def process_directory(model, image_dir, output_dir=None, device='cpu'):
         # Load image
         image = np.array(Image.open(img_path).convert('L'))
         
-        # Predict
-        mask = predict_mask(model, image, device)
+        # Predict with optional temporal smoothing
+        mask = predict_mask(model, image, device, smoother)
         
         # Extract lines
         lines = extract_lines_from_mask(mask)
@@ -198,7 +230,87 @@ def process_directory(model, image_dir, output_dir=None, device='cpu'):
             save_path = output_dir / f"{img_path.stem}_result.png"
             visualize_prediction(image, mask, lines, save_path)
     
+    if temporal_smoothing and smoother:
+        print(f"  ℹ️  Smoother warmed up: {smoother.is_warmed_up()}")
+    
     print(f"\n✅ Processed {len(image_files)} images")
+
+
+def process_video_frames(model, frame_dir, output_video=None, device='cpu',
+                        temporal_smoothing=True, smooth_method='median',
+                        window_size=5, alpha=0.3, fps=30):
+    """
+    Process sequential video frames with temporal smoothing.
+    
+    Args:
+        model: Trained model
+        frame_dir: Directory with frames (e.g., frame_000000.npz)
+        output_video: Path to save output video (optional)
+        device: torch device
+        temporal_smoothing: Enable temporal smoothing
+        smooth_method: 'median', 'mean', or 'exponential'
+        window_size: Temporal window size
+        alpha: For exponential smoothing
+        fps: Output video frame rate
+    """
+    from pathlib import Path
+    
+    frame_dir = Path(frame_dir)
+    frame_files = sorted(frame_dir.glob('frame_*.npz'))
+    
+    if not frame_files:
+        print(f"❌ No frame files found in {frame_dir}")
+        return
+    
+    # Initialize smoother
+    smoother = None
+    if temporal_smoothing:
+        smoother = ProbabilityTemporalSmoother(
+            window_size=window_size,
+            method=smooth_method,
+            alpha=alpha,
+            threshold=0.5
+        )
+        print(f"🔄 Temporal smoothing: {smooth_method}, window={window_size}")
+    
+    # Setup video writer if requested
+    video_writer = None
+    if output_video:
+        # Load first frame to get dimensions
+        data = np.load(frame_files[0])
+        sonar = data['sonar_image']
+        H, W = sonar.shape
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(str(output_video), fourcc, fps, (W * 2, H))
+        print(f"📹 Writing video to {output_video}")
+    
+    print(f"Processing {len(frame_files)} frames...")
+    
+    for frame_path in frame_files:
+        # Load NPZ frame
+        data = np.load(frame_path)
+        sonar_polar = data['sonar_image']
+        
+        # Convert to Cartesian for display (simplified)
+        # You may want to use your actual polar_to_cartesian function
+        sonar_display = cv2.resize(sonar_polar, (400, 400))
+        
+        # Predict with temporal smoothing
+        mask = predict_mask(model, sonar_display, device, smoother)
+        
+        # Create visualization frame
+        if video_writer:
+            # Side-by-side: original + mask overlay
+            vis_img = cv2.cvtColor(sonar_display, cv2.COLOR_GRAY2BGR)
+            vis_mask = cv2.applyColorMap(mask, cv2.COLORMAP_HOT)
+            combined = np.hstack([vis_img, vis_mask])
+            video_writer.write(combined)
+    
+    if video_writer:
+        video_writer.release()
+        print(f"✅ Video saved to {output_video}")
+    
+    print(f"✅ Processed {len(frame_files)} frames")
 
 
 if __name__ == '__main__':
@@ -211,6 +323,26 @@ if __name__ == '__main__':
                         help='Directory to save results')
     parser.add_argument('--device', type=str, default='cpu',
                         help='Device to run inference on (cpu/cuda)')
+    
+    # Temporal smoothing options
+    parser.add_argument('--temporal_smoothing', action='store_true',
+                        help='Enable temporal smoothing (for video sequences)')
+    parser.add_argument('--smooth_method', type=str, default='median',
+                        choices=['median', 'mean', 'exponential'],
+                        help='Smoothing method (median recommended for sonar)')
+    parser.add_argument('--window_size', type=int, default=5,
+                        help='Temporal window size (3-7 recommended)')
+    parser.add_argument('--alpha', type=float, default=0.3,
+                        help='Alpha for exponential smoothing (0.1-0.5)')
+    
+    # Video processing mode
+    parser.add_argument('--video_mode', action='store_true',
+                        help='Process as video frames (expects frame_*.npz files)')
+    parser.add_argument('--output_video', type=str, default=None,
+                        help='Output video path (for video mode)')
+    parser.add_argument('--fps', type=int, default=30,
+                        help='Output video frame rate')
+    
     args = parser.parse_args()
     
     # Load model
@@ -218,4 +350,20 @@ if __name__ == '__main__':
     model = load_model(args.model, device)
     
     # Process images
-    process_directory(model, args.image_dir, args.output_dir, device)
+    if args.video_mode:
+        process_video_frames(
+            model, args.image_dir, args.output_video, device,
+            temporal_smoothing=args.temporal_smoothing,
+            smooth_method=args.smooth_method,
+            window_size=args.window_size,
+            alpha=args.alpha,
+            fps=args.fps
+        )
+    else:
+        process_directory(
+            model, args.image_dir, args.output_dir, device,
+            temporal_smoothing=args.temporal_smoothing,
+            smooth_method=args.smooth_method,
+            window_size=args.window_size,
+            alpha=args.alpha
+        )
