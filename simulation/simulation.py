@@ -262,22 +262,30 @@ def main(scene_path='src.scenes.fish_cage_scene', save_run=None, collect_mode=No
             # Skip static_cache (large arrays, not needed for snapshot)
             if key == 'static_cache':
                 continue
+            
+            # Skip non-serializable objects (e.g., FloatingParticleSystem)
+            if not isinstance(value, (list, dict, np.ndarray, str, int, float, bool, type(None))):
+                continue
                 
             if isinstance(value, list):
                 # List of objects (fish, cars, etc.)
                 serialized = []
                 for obj in value:
+                    # Skip non-dict objects in lists
+                    if not isinstance(obj, dict):
+                        continue
                     obj_dict = {}
                     for k, v in obj.items():
                         if isinstance(v, np.ndarray):
                             obj_dict[k] = v.tolist()
-                        else:
+                        elif isinstance(v, (str, int, float, bool, type(None))):
                             obj_dict[k] = v
+                        # Skip non-serializable values in objects
                     serialized.append(obj_dict)
                 scene_snapshot['dynamic_objects_initial'][key] = serialized
             elif isinstance(value, np.ndarray):
                 scene_snapshot['dynamic_objects_initial'][key] = value.tolist()
-            else:
+            elif isinstance(value, (str, int, float, bool, type(None))):
                 scene_snapshot['dynamic_objects_initial'][key] = value
         
         with open(save_dir / 'scene_snapshot.json', 'w') as f:

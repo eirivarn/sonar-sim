@@ -308,9 +308,6 @@ class VoxelSonar:
                         beam_idx += 1
                 else:
                     beam_idx += 1
-            
-            if groups_applied > 0:
-                print(f"Applied {groups_applied} grouped scatter patches")
         
         # AZIMUTH STREAKING: Localized range-slice saturation from excessive returns
         if SONAR_CONFIG['azimuth_streak_enabled']:
@@ -321,10 +318,6 @@ class VoxelSonar:
             # Identify range bins with high energy
             threshold = SONAR_CONFIG['azimuth_streak_threshold'] * max_energy
             high_energy_ranges = range_energy > threshold
-            
-            num_high = np.sum(high_energy_ranges)
-            if num_high > 0:
-                print(f"Found {num_high} high-energy range bins (threshold={threshold:.2f}, max={max_energy:.2f})")
             
             # Apply streaking with some probability
             streak_prob = SONAR_CONFIG['azimuth_streak_probability']
@@ -347,9 +340,6 @@ class VoxelSonar:
                     beam_end = min(self.num_beams, streak_center + streak_width // 2)
                     image[r_idx, beam_start:beam_end] *= gain_adjust
                     streaks_applied += 1
-            
-            if streaks_applied > 0:
-                print(f"Applied {streaks_applied} azimuth streaks")
         
         # INTENSITY GAIN: Apply calibration to match real sonar levels
         image *= SONAR_CONFIG['intensity_gain']
