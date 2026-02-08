@@ -53,3 +53,11 @@ temp/
 # Data
 data/
 net_localization/training_data_augmented/
+net_localization/train_val_10m/
+# Model checkpoints
+best_net_segmentation.pth
+best_temporal_segmentation.pth
+*.pth
+
+# Model checkpoints
+*.pth

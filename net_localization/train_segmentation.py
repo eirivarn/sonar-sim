@@ -88,7 +88,7 @@ class DiceLoss(nn.Module):
         return 1 - dice.mean()
 
 
-def train_model(data_dir, epochs=50, batch_size=8, lr=1e-4):
+def train_model(data_dir, epochs=50, batch_size=8, lr=1e-4, resume=None, start_epoch=0):
     """Train U-Net segmentation model"""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -135,12 +135,28 @@ def train_model(data_dir, epochs=50, batch_size=8, lr=1e-4):
     
     best_val_loss = float('inf')
     
+    # Resume from checkpoint if provided
+    if resume:
+        print(f"Resuming from checkpoint: {resume}")
+        checkpoint = torch.load(resume, map_location=device, weights_only=False)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            # Full checkpoint with optimizer state
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint.get('epoch', 0) + 1
+            best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            print(f"  Loaded from epoch {start_epoch-1}, best_val_loss={best_val_loss:.4f}")
+        else:
+            # Just model weights (old format or raw state_dict)
+            model.load_state_dict(checkpoint)
+            print(f"  Loaded model weights only (no optimizer state)")
+    
     # Training loop
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, start_epoch + epochs):
         # Train
         model.train()
         train_loss = 0
-        for images, masks in tqdm(train_loader, desc=f'Epoch {epoch+1}/{epochs}'):
+        for images, masks in tqdm(train_loader, desc=f'Epoch {epoch+1}/{start_epoch + epochs}'):
             images, masks = images.to(device), masks.to(device)
             
             optimizer.zero_grad()
@@ -171,7 +187,13 @@ def train_model(data_dir, epochs=50, batch_size=8, lr=1e-4):
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), 'best_net_segmentation.pth')
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_val_loss': best_val_loss,
+            }
+            torch.save(checkpoint, 'best_net_segmentation.pth')
             print(f"  ✅ Saved best model (val_loss={val_loss:.4f})")
     
     print("\n✅ Training complete!")
@@ -188,6 +210,8 @@ if __name__ == '__main__':
                         help='Batch size for training')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume from (e.g., best_net_segmentation.pth)')
     args = parser.parse_args()
     
-    train_model(args.data_dir, args.epochs, args.batch_size, args.lr)
+    train_model(args.data_dir, args.epochs, args.batch_size, args.lr, args.resume)
