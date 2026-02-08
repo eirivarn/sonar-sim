@@ -53,3 +53,4 @@ temp/
 # Data
 data/
 net_localization/training_data_augmented/
+net_localization/models/
